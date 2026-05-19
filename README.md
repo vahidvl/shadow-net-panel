@@ -48,9 +48,8 @@ Unlike typical modifications, Shadow-Net integrates natively into the Go backend
 We provide a seamless, automated installation script that upgrades any existing 3x-ui panel to the Shadow-Net Edition without data loss.
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/shadow-net-panel/main/patch_v3.0.2_shadow_net.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/vahidvl/shadow-net-panel/main/patch_v3.0.2_shadow_net.sh)
 ```
-> **Note:** Replace `YOUR_GITHUB_USERNAME` with your actual GitHub username once pushed.
 
 The installer supports two modes:
 - **Mode 1 (Fast):** Downloads a precompiled `x-ui` binary and replaces your current panel instantly.
