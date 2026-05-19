@@ -50,10 +50,8 @@
 ما یک اسکریپت نصب کاملاً خودکار و هوشمند آماده کرده‌ایم که پنل ۳x-ui فعلی شما را (بدون حذف شدن دیتابیس یا اطلاعات کاربران) به نسخه Shadow-Net ارتقا می‌دهد.
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/shadow-net-panel/main/patch_v3.0.2_shadow_net.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/vahidvl/shadow-net-panel/main/patch_v3.0.2_shadow_net.sh)
 ```
-> **توجه:** پس از آپلود کدها در گیت‌هاب خود، آیدی خودتان را جایگزین `YOUR_GITHUB_USERNAME` کنید.
-
 این نصاب از دو حالت پشتیبانی می‌کند:
 - **حالت ۱ (سریع):** دانلود نسخه از پیش کامپایل شده (باینری) و جایگزینی فوری در کسری از ثانیه.
 - **حالت ۲ (سورس):** دانلود مستقیم کدهای سورس، بیلد کردن فرانت‌اند و کامپایل کردن کدهای Go به صورت محلی روی سرور شما (نیاز به نصب بودن Go و NodeJS دارد).
