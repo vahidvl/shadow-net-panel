@@ -87,6 +87,8 @@ func (a *InboundController) initRouter(g *gin.RouterGroup) {
 	g.POST("/lastOnline", a.lastOnline)
 	g.POST("/updateClientTraffic/:email", a.updateClientTraffic)
 	g.POST("/:id/delClientByEmail/:email", a.delInboundClientByEmail)
+	g.POST("/setAsProxy/:id", a.setAsProxy)
+	g.POST("/disableProxy", a.disableProxy)
 }
 
 type CopyInboundClientsRequest struct {
@@ -647,4 +649,23 @@ func (a *InboundController) getClientLinks(c *gin.Context) {
 		return
 	}
 	jsonObj(c, links, nil)
+}
+
+func (a *InboundController) setAsProxy(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		jsonMsg(c, I18nWeb(c, "get"), err)
+		return
+	}
+	err = a.inboundService.SetInboundAsProxy(id, resolveHost(c))
+	jsonMsg(c, I18nWeb(c, "pages.settings.toasts.modifySettings"), err)
+}
+
+func (a *InboundController) disableProxy(c *gin.Context) {
+	settingService := service.SettingService{}
+	err := settingService.SetSnPanelProxyEnable(false)
+	if err == nil {
+		service.GetProxyBridgeService().Stop()
+	}
+	jsonMsg(c, I18nWeb(c, "pages.settings.toasts.modifySettings"), err)
 }

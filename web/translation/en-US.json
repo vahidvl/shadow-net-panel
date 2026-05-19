@@ -610,6 +610,16 @@
         "userPassMustBeNotEmpty": "The new username and password is empty",
         "getOutboundTrafficError": "Error getting traffics",
         "resetOutboundTrafficError": "Error in reset outbound traffics"
+      },
+      "shadowNet": {
+        "panelProxy": "Panel Proxy",
+        "setAsPanelProxy": "Set as Panel Proxy",
+        "disablePanelProxy": "Disable Panel Proxy",
+        "proxySuccess": "Proxy updated successfully",
+        "proxyFailed": "Failed to update proxy",
+        "proxyDisableSuccess": "Proxy disabled successfully",
+        "proxyDisableFailed": "Failed to disable proxy",
+        "proxyTooltip": "All outgoing panel requests are routed through this inbound proxy."
       }
     },
     "xray": {

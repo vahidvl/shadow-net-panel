@@ -1,57 +1,91 @@
-[English](/README.md) | [فارسی](/README.fa_IR.md) | [العربية](/README.ar_EG.md) | [中文](/README.zh_CN.md) | [Español](/README.es_ES.md) | [Русский](/README.ru_RU.md)
+<h1 align="center">
+  <img src="https://raw.githubusercontent.com/MahMotion/3x-ui-shadownet/main/frontend/src/assets/logo.png" alt="3x-ui Shadow-Net" width="120" />
+  <br>
+  3x-ui: Shadow-Net Edition
+</h1>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./media/3x-ui-dark.png">
-    <img alt="3x-ui" src="./media/3x-ui-light.png">
-  </picture>
+  <b>A stealth-focused, commercial-grade fork of the official 3x-ui panel, engineered for maximum resilience and multi-bot automation.</b>
 </p>
 
-[![Release](https://img.shields.io/github/v/release/mhsanaei/3x-ui.svg)](https://github.com/MHSanaei/3x-ui/releases)
-[![Build](https://img.shields.io/github/actions/workflow/status/mhsanaei/3x-ui/release.yml.svg)](https://github.com/MHSanaei/3x-ui/actions)
-[![GO Version](https://img.shields.io/github/go-mod/go-version/mhsanaei/3x-ui.svg)](#)
-[![Downloads](https://img.shields.io/github/downloads/mhsanaei/3x-ui/total.svg)](https://github.com/MHSanaei/3x-ui/releases/latest)
-[![License](https://img.shields.io/badge/license-GPL%20V3-blue.svg?longCache=true)](https://www.gnu.org/licenses/gpl-3.0.en.html)
-[![Go Reference](https://pkg.go.dev/badge/github.com/mhsanaei/3x-ui/v3.svg)](https://pkg.go.dev/github.com/mhsanaei/3x-ui/v3)
-[![Go Report Card](https://goreportcard.com/badge/github.com/mhsanaei/3x-ui/v3)](https://goreportcard.com/report/github.com/mhsanaei/3x-ui/v3)
+<p align="center">
+  <a href="README-fa.md">🇮🇷 راهنمای فارسی</a> | <a href="README.md">🇺🇸 English Guide</a>
+</p>
 
-**3X-UI** — advanced, open-source web-based control panel designed for managing Xray-core server. It offers a user-friendly interface for configuring and monitoring various VPN and proxy protocols.
+---
 
-> [!IMPORTANT]
-> This project is only for personal usage, please do not use it for illegal purposes, and please do not use it in a production environment.
+## 🌟 Overview
 
-As an enhanced fork of the original X-UI project, 3X-UI provides improved stability, broader protocol support, and additional features.
+**Shadow-Net Edition** is a heavily customized, production-ready fork of the widely popular [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui) v3.0.2. It introduces advanced stealth routing, UI/UX enhancements, and deep integration hooks for Telegram automation bots, making it the perfect backend for VPN sellers and commercial operators.
 
-## Quick Start
+Unlike typical modifications, Shadow-Net integrates natively into the Go backend and Vue frontend, ensuring zero performance penalty while adding critical business features.
+
+## 🚀 Exclusive Features
+
+1. **Smart Outbound Proxy Bridge**
+   - Renders local API/Telegram traffic out through a dynamically configured upstream proxy (SOCKS5/HTTP/VLESS).
+   - Bypasses local datacenter censorship (e.g., ArvanCloud/Iran restrictions) safely without breaking Xray's global routing.
+
+2. **Pre-Flight Handshake Validation**
+   - Automatically tests proxy configurations against Cloudflare DoH (`1.1.1.1`) on an isolated temporary socket before activation.
+   - Eliminates "false positive" running states in the UI.
+
+3. **Triple-Bot Infrastructure Hooks**
+   - Native database integration and settings tabs for three independent Telegram bots: **Sales Bot**, **Sentinel Bot** (Monitoring), and **Admin Bot**.
+   - Tokens are securely redacted from frontend public API views.
+
+4. **Three-Strikes Watchdog (Penalty System)**
+   - Client-level IP monitoring and a `penalty` tracking system to enforce account usage limits and automatically disable abusers.
+
+5. **Premium UI/UX Enhancements**
+   - **Proxy Control Panel:** An elegant, theme-aware control pane located above the Logout button for instant proxy toggling.
+   - **Pulsing Header Badge:** A minimal, animated status indicator globally visible in the header when the proxy bridge is active.
+
+---
+
+## 💻 Installation & Upgrade
+
+We provide a seamless, automated installation script that upgrades any existing 3x-ui panel to the Shadow-Net Edition without data loss.
 
 ```bash
-bash <(curl -Ls https://raw.githubusercontent.com/mhsanaei/3x-ui/master/install.sh)
+bash <(curl -Ls https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/shadow-net-panel/main/patch_v3.0.2_shadow_net.sh)
+```
+> **Note:** Replace `YOUR_GITHUB_USERNAME` with your actual GitHub username once pushed.
+
+The installer supports two modes:
+- **Mode 1 (Fast):** Downloads a precompiled `x-ui` binary and replaces your current panel instantly.
+- **Mode 2 (Source):** Pulls the source code, compiles the Vue frontend and Go backend locally on your server, and installs it.
+
+---
+
+## 🛠️ Building from Source
+
+If you prefer to compile the panel yourself for security auditing or custom architecture (e.g., ARM64):
+
+### Prerequisites
+- [Go](https://go.dev/doc/install) >= 1.22
+- [Node.js](https://nodejs.org/en/download/) >= 22 (and `npm` >= 10)
+
+### 1. Build the Frontend (Vite/Vue)
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
 ```
 
-For full documentation, please visit the [project Wiki](https://github.com/MHSanaei/3x-ui/wiki).
+### 2. Compile the Go Backend
+```bash
+go build -tags=jsoniter -ldflags="-s -w" -o bin/x-ui main.go
+```
 
-## A Special Thanks to
+The resulting `x-ui` binary inside the `bin/` directory contains the full application (with the frontend embedded).
 
-- [alireza0](https://github.com/alireza0/)
+---
 
-## Acknowledgment
+## 🤝 Upstream Acknowledgment
 
-- [Iran v2ray rules](https://github.com/chocolate4u/Iran-v2ray-rules) (License: **GPL-3.0**): _Enhanced v2ray/xray and v2ray/xray-clients routing rules with built-in Iranian domains and a focus on security and adblocking._
-- [Russia v2ray rules](https://github.com/runetfreedom/russia-v2ray-rules-dat) (License: **GPL-3.0**): _This repository contains automatically updated V2Ray routing rules based on data on blocked domains and addresses in Russia._
+This project is built upon the phenomenal work of [MHSanaei/3x-ui](https://github.com/MHSanaei/3x-ui). All core Xray routing and multi-node functionality belongs to the original authors. Shadow-Net focuses purely on commercial and stealth extensions.
 
-## Support project
-
-**If this project is helpful to you, you may wish to give it a**:star2:
-
-<a href="https://www.buymeacoffee.com/MHSanaei" target="_blank">
-<img src="./media/default-yellow.png" alt="Buy Me A Coffee" style="height: 70px !important;width: 277px !important;" >
-</a>
-
-</br>
-<a href="https://nowpayments.io/donation/hsanaei" target="_blank" rel="noreferrer noopener">
-   <img src="./media/donation-button-black.svg" alt="Crypto donation button by NOWPayments">
-</a>
-
-## Stargazers over Time
-
-[![Stargazers over time](https://starchart.cc/MHSanaei/3x-ui.svg?variant=adaptive)](https://starchart.cc/MHSanaei/3x-ui)
+## 📝 License
+This project is licensed under the GPL-3.0 License - see the LICENSE file for details.

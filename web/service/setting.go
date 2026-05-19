@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/url"
 	"reflect"
 	"strconv"
 	"strings"
@@ -28,7 +30,7 @@ var defaultValueMap = map[string]string{
 	"xrayTemplateConfig":          xrayTemplateConfig,
 	"webListen":                   "",
 	"webDomain":                   "",
-	"webPort":                     "2053",
+	"webPort":                     "62053",
 	"webCertFile":                 "",
 	"webKeyFile":                  "",
 	"secret":                      random.Seq(32),
@@ -110,6 +112,14 @@ var defaultValueMap = map[string]string{
 	"ldapDefaultTotalGB":    "0",
 	"ldapDefaultExpiryDays": "0",
 	"ldapDefaultLimitIP":    "0",
+	"snBotTokenSales":       "",
+	"snBotTokenSentinel":    "",
+	"snBotTokenAdmin":       "",
+	"snAdminChatId":         "",
+	"snMaxPenalty":          "3",
+	"snPanelProxyEnable":    "false",
+	"snPanelProxyURL":       "",
+	"snPanelProxyHistory":   "[]",
 }
 
 // SettingService provides business logic for application settings management.
@@ -215,9 +225,15 @@ func (s *SettingService) GetAllSettingView() (*entity.AllSettingView, error) {
 	if err := database.GetDB().Model(model.ApiToken{}).Where("enabled = ?", true).Count(&apiTokenCount).Error; err == nil {
 		view.HasApiToken = apiTokenCount > 0
 	}
+	view.HasSnBotTokenSales = secretConfigured(allSetting.SnBotTokenSales)
+	view.HasSnBotTokenSentinel = secretConfigured(allSetting.SnBotTokenSentinel)
+	view.HasSnBotTokenAdmin = secretConfigured(allSetting.SnBotTokenAdmin)
 	view.TgBotToken = ""
 	view.TwoFactorToken = ""
 	view.LdapPassword = ""
+	view.SnBotTokenSales = ""
+	view.SnBotTokenSentinel = ""
+	view.SnBotTokenAdmin = ""
 	return view, nil
 }
 
@@ -365,6 +381,18 @@ func (s *SettingService) GetTgBotChatId() (string, error) {
 
 func (s *SettingService) SetTgBotChatId(chatIds string) error {
 	return s.setString("tgBotChatId", chatIds)
+}
+
+func (s *SettingService) GetProxyStatus() map[string]interface{} {
+	return GetProxyBridgeService().GetStatus()
+}
+
+func (s *SettingService) SetSnPanelProxyURL(value string) error {
+	return s.setString("snPanelProxyURL", value)
+}
+
+func (s *SettingService) SetSnPanelProxyEnable(value bool) error {
+	return s.setBool("snPanelProxyEnable", value)
 }
 
 func (s *SettingService) GetTgbotEnabled() (bool, error) {
@@ -770,6 +798,65 @@ func (s *SettingService) GetLdapDefaultLimitIP() (int, error) {
 	return s.getInt("ldapDefaultLimitIP")
 }
 
+func (s *SettingService) GetSnPanelProxyEnable() (bool, error) {
+	return s.getBool("snPanelProxyEnable")
+}
+
+func (s *SettingService) GetSnPanelProxyURL() (string, error) {
+	return s.getString("snPanelProxyURL")
+}
+
+func (s *SettingService) TestProxy(proxyURL string) error {
+	transport := &http.Transport{}
+	isURI := strings.HasPrefix(proxyURL, "vless://") ||
+		strings.HasPrefix(proxyURL, "vmess://") ||
+		strings.HasPrefix(proxyURL, "trojan://")
+
+	// Use an isolated ephemeral bridge (port 10812) so the test never
+	// pollutes the global bridge's running/stopped state.
+	var testBridge *ProxyBridgeService
+
+	if isURI {
+		testBridge = NewTestBridge()
+		if err := testBridge.Start(proxyURL); err != nil {
+			return fmt.Errorf("start proxy bridge failed: %w", err)
+		}
+		u, _ := url.Parse(fmt.Sprintf("socks5://127.0.0.1:%d", testBridge.GetBridgePort()))
+		transport.Proxy = http.ProxyURL(u)
+	} else if u, err := url.Parse(proxyURL); err == nil {
+		transport.Proxy = http.ProxyURL(u)
+	} else {
+		return fmt.Errorf("invalid proxy URL")
+	}
+
+	client := &http.Client{
+		Timeout:   10 * time.Second,
+		Transport: transport,
+	}
+
+	// Use 1.1.1.1 (Cloudflare DNS over HTTPS) as the test target.
+	// It is reachable worldwide and responds within ms.
+	resp, err := client.Get("https://1.1.1.1/dns-query")
+
+	// Always stop the test bridge — it's ephemeral and must not linger.
+	if testBridge != nil {
+		testBridge.Stop()
+	}
+
+	if err != nil {
+		return fmt.Errorf("connection failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 &&
+		resp.StatusCode != http.StatusUnauthorized &&
+		resp.StatusCode != http.StatusBadRequest {
+		return fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
 	if err := s.preserveRedactedSecrets(allSetting); err != nil {
 		return err
@@ -779,6 +866,16 @@ func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
 	}
 	if err := allSetting.CheckValid(); err != nil {
 		return err
+	}
+
+	if allSetting.SnPanelProxyEnable {
+		err := s.TestProxy(allSetting.SnPanelProxyURL)
+		if err != nil {
+			return common.NewError("Proxy connection test failed: " + err.Error())
+		}
+		GetProxyBridgeService().Start(allSetting.SnPanelProxyURL)
+	} else {
+		GetProxyBridgeService().Stop()
 	}
 
 	v := reflect.ValueOf(allSetting).Elem()
@@ -819,6 +916,18 @@ func (s *SettingService) preserveRedactedSecrets(allSetting *entity.AllSetting) 
 		}
 		allSetting.TwoFactorToken = value
 	}
+	if strings.TrimSpace(allSetting.SnBotTokenSales) == "" {
+		value, _ := s.getString("snBotTokenSales")
+		allSetting.SnBotTokenSales = value
+	}
+	if strings.TrimSpace(allSetting.SnBotTokenSentinel) == "" {
+		value, _ := s.getString("snBotTokenSentinel")
+		allSetting.SnBotTokenSentinel = value
+	}
+	if strings.TrimSpace(allSetting.SnBotTokenAdmin) == "" {
+		value, _ := s.getString("snBotTokenAdmin")
+		allSetting.SnBotTokenAdmin = value
+	}
 	return nil
 }
 
@@ -842,7 +951,7 @@ func validateSettingsURLs(allSetting *entity.AllSetting) error {
 
 func (s *SettingService) UpdateSecret(key string, value string) error {
 	switch key {
-	case "tgBotToken", "ldapPassword", "twoFactorToken":
+	case "tgBotToken", "ldapPassword", "twoFactorToken", "snBotTokenSales", "snBotTokenSentinel", "snBotTokenAdmin":
 		return s.saveSetting(key, strings.TrimSpace(value))
 	default:
 		return common.NewError("secret key is not replaceable:", key)

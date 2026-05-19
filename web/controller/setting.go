@@ -50,6 +50,8 @@ func (a *SettingController) initRouter(g *gin.RouterGroup) {
 	g.POST("/apiTokens/create", a.createApiToken)
 	g.POST("/apiTokens/delete/:id", a.deleteApiToken)
 	g.POST("/apiTokens/setEnabled/:id", a.setApiTokenEnabled)
+	g.POST("/testProxy", a.testProxy)
+	g.GET("/proxyStatus", a.getProxyStatus)
 }
 
 // getAllSetting retrieves all current settings.
@@ -88,6 +90,11 @@ func (a *SettingController) updateSetting(c *gin.Context) {
 		}
 	}
 	jsonMsg(c, I18nWeb(c, "pages.settings.toasts.modifySettings"), err)
+}
+
+func (a *SettingController) getProxyStatus(c *gin.Context) {
+	status := a.settingService.GetProxyStatus()
+	jsonObj(c, status, nil)
 }
 
 // updateUser updates the current user's username and password.
@@ -186,4 +193,19 @@ func (a *SettingController) setApiTokenEnabled(c *gin.Context) {
 		return
 	}
 	jsonMsg(c, I18nWeb(c, "pages.settings.toasts.modifySettings"), a.apiTokenService.SetEnabled(id, form.Enabled))
+}
+func (a *SettingController) testProxy(c *gin.Context) {
+	var form struct {
+		ProxyURL string `json:"proxyUrl" form:"proxyUrl"`
+	}
+	if err := c.ShouldBind(&form); err != nil {
+		jsonMsg(c, I18nWeb(c, "pages.settings.toasts.modifySettings"), err)
+		return
+	}
+	err := a.settingService.TestProxy(form.ProxyURL)
+	if err != nil {
+		jsonMsg(c, "Connection failed: "+err.Error(), err)
+	} else {
+		jsonMsg(c, "Connection successful!", nil)
+	}
 }

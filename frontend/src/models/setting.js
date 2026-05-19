@@ -31,6 +31,14 @@ export class AllSetting {
         this.tgBotLoginNotify = true;
         this.tgCpu = 80;
         this.tgLang = "en-US";
+        this.snBotTokenSales = "";
+        this.snBotTokenSentinel = "";
+        this.snBotTokenAdmin = "";
+        this.snAdminChatId = "";
+        this.snMaxPenalty = 3;
+        this.snPanelProxyEnable = false;
+        this.snPanelProxyURL = "";
+        this.snPanelProxyHistory = "[]";
         this.twoFactorEnable = false;
         this.twoFactorToken = "";
         this.xrayTemplateConfig = "";
@@ -95,6 +103,9 @@ export class AllSetting {
         this.hasApiToken = false;
         this.hasWarpSecret = false;
         this.hasNordSecret = false;
+        this.hasSnBotTokenSales = false;
+        this.hasSnBotTokenSentinel = false;
+        this.hasSnBotTokenAdmin = false;
 
         if (data == null) {
             return

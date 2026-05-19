@@ -9,8 +9,8 @@
   },
   "inbounds": [{
     "listen": "127.0.0.1",
-    "port": 62789,
-    "protocol": "tunnel",
+    "port": 62000,
+    "protocol": "dokodemo-door",
     "settings": {
       "rewriteAddress": "127.0.0.1"
     },

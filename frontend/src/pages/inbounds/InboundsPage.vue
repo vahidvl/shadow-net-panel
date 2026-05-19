@@ -45,6 +45,8 @@ const {
   ipLimitEnable,
   remarkModel,
   lastOnlineMap,
+  statsVersion,
+  activeProxyConfigName,
   refresh,
   fetchDefaultSettings,
   applyTrafficEvent,
@@ -544,6 +546,23 @@ function onRowAction({ key, dbInbound }) {
     case 'delDepletedClients':
       confirmDelDepleted(dbInbound.id);
       break;
+    case 'setAsProxy':
+      Modal.confirm({
+        title: t('pages.settings.shadowNet.setAsPanelProxy') + '?',
+        content: dbInbound.remark,
+        okText: t('ok'),
+        cancelText: t('cancel'),
+        onOk: async () => {
+          const msg = await HttpUtil.post(`/panel/api/inbounds/setAsProxy/${dbInbound.id}`);
+          if (msg?.success) {
+            message.success(t('pages.settings.shadowNet.proxySuccess'));
+            await refresh();
+          } else {
+            message.error(t('pages.settings.shadowNet.proxyFailed'));
+          }
+        },
+      });
+      break;
     default:
       message.info(`Action "${key}" — coming in a later 5f subphase`);
   }
@@ -648,6 +667,7 @@ function onRowAction({ key, dbInbound }) {
                   :last-online-map="lastOnlineMap" :is-dark-theme="themeState.isDark" :expire-diff="expireDiff"
                   :traffic-diff="trafficDiff" :page-size="pageSize" :is-mobile="isMobile"
                   :sub-enable="subSettings.enable" :nodes-by-id="nodesById" :has-active-node="hasActiveNode"
+                  :stats-version="statsVersion" :active-proxy-config-name="activeProxyConfigName"
                   @refresh="refresh"
                   @add-inbound="onAddInbound" @general-action="onGeneralAction" @row-action="onRowAction"
                   @edit-client="onEditClient" @qrcode-client="onQrcodeClient" @info-client="onInfoClient"

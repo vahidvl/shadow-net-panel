@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -3322,6 +3323,20 @@ func (s *InboundService) GetActiveClientTraffics(emails []string) ([]*xray.Clien
 	return traffics, nil
 }
 
+// GetAllClientTraffics returns the full set of client_traffics rows so the
+// websocket broadcasters can ship a complete snapshot every cycle. The old
+// delta-only path (GetActiveClientTraffics on activeEmails) silently dropped
+// the per-client section whenever no client moved bytes in the cycle or a
+// node sync failed, leaving client rows in the UI stuck at stale numbers.
+func (s *InboundService) GetAllClientTraffics() ([]*xray.ClientTraffic, error) {
+	db := database.GetDB()
+	var traffics []*xray.ClientTraffic
+	if err := db.Model(xray.ClientTraffic{}).Find(&traffics).Error; err != nil {
+		return nil, err
+	}
+	return traffics, nil
+}
+
 type InboundTrafficSummary struct {
 	Id      int   `json:"id"`
 	Up      int64 `json:"up"`
@@ -3900,4 +3915,81 @@ func (s *InboundService) GetClientLinks(host string, id int, email string) ([]st
 		return nil, common.NewError("sub link provider not registered")
 	}
 	return registeredSubLinkProvider.LinksForClient(host, inbound, email), nil
+}
+
+func (s *InboundService) SetInboundAsProxy(id int, host string) error {
+	inbound, err := s.GetInbound(id)
+	if err != nil {
+		return err
+	}
+
+	var email string
+	var settings map[string]interface{}
+	json.Unmarshal([]byte(inbound.Settings), &settings)
+	if clients, ok := settings["clients"].([]interface{}); ok && len(clients) > 0 {
+		if client, ok := clients[0].(map[string]interface{}); ok {
+			email, _ = client["email"].(string)
+		}
+	}
+
+	if email == "" {
+		return common.NewError("Inbound has no clients to use for proxy")
+	}
+
+	links, err := s.GetClientLinks(host, id, email)
+	if err != nil || len(links) == 0 {
+		return common.NewError("Could not generate proxy link for this inbound")
+	}
+
+	link := links[0]
+	// Add fragment for name if not present
+	if !strings.Contains(link, "#") {
+		link += "#" + url.PathEscape(inbound.Remark)
+	}
+
+	settingService := SettingService{}
+	// Enforce testing the connection first!
+	err = settingService.TestProxy(link)
+	if err != nil {
+		return common.NewError("Proxy connection test failed: " + err.Error())
+	}
+
+	err = settingService.SetSnPanelProxyURL(link)
+	if err != nil {
+		return err
+	}
+	err = settingService.SetSnPanelProxyEnable(true)
+	if err != nil {
+		return err
+	}
+
+	// Add to history!
+	historyStr, _ := settingService.getString("snPanelProxyHistory")
+	var history []map[string]any
+	json.Unmarshal([]byte(historyStr), &history)
+
+	exists := false
+	for _, item := range history {
+		if item["url"] == link {
+			exists = true
+			break
+		}
+	}
+
+	if !exists {
+		newItem := map[string]any{
+			"id":      fmt.Sprintf("%d", time.Now().UnixNano()),
+			"remark":  inbound.Remark,
+			"url":     link,
+			"addedAt": time.Now().Format(time.RFC3339),
+		}
+		history = append(history, newItem)
+		newHistoryStr, _ := json.Marshal(history)
+		settingService.saveSetting("snPanelProxyHistory", string(newHistoryStr))
+	}
+
+	// Trigger bridge start immediately
+	GetProxyBridgeService().Start(link)
+
+	return nil
 }

@@ -610,6 +610,16 @@
         "userPassMustBeNotEmpty": "نام‌کاربری یا رمزعبور جدید خالی‌است",
         "getOutboundTrafficError": "خطا در دریافت ترافیک خروجی",
         "resetOutboundTrafficError": "خطا در بازنشانی ترافیک خروجی"
+      },
+      "shadowNet": {
+        "panelProxy": "پروکسی پنل",
+        "setAsPanelProxy": "تنظیم به عنوان پروکسی پنل",
+        "disablePanelProxy": "غیرفعال‌سازی پروکسی پنل",
+        "proxySuccess": "پروکسی پنل با موفقیت به‌روزرسانی شد",
+        "proxyFailed": "خطا در به‌روزرسانی پروکسی پنل",
+        "proxyDisableSuccess": "پروکسی پنل با موفقیت غیرفعال شد",
+        "proxyDisableFailed": "خطا در غیرفعال‌سازی پروکسی پنل",
+        "proxyTooltip": "تمامی درخواست‌های خروجی پنل توسط این اینباند پروکسی شده‌اند."
       }
     },
     "xray": {

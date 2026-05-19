@@ -16,6 +16,7 @@ import (
 	"github.com/mhsanaei/3x-ui/v3/database"
 	"github.com/mhsanaei/3x-ui/v3/database/model"
 	"github.com/mhsanaei/3x-ui/v3/logger"
+	"github.com/mhsanaei/3x-ui/v3/web/service"
 	"github.com/mhsanaei/3x-ui/v3/xray"
 )
 
@@ -28,7 +29,8 @@ type IPWithTimestamp struct {
 // CheckClientIpJob monitors client IP addresses from access logs and manages IP blocking based on configured limits.
 type CheckClientIpJob struct {
 	lastClear     int64
-	disAllowedIps []string
+	disAllowedIps    []string
+	shadownetService service.ShadowNetService
 }
 
 var job *CheckClientIpJob
@@ -431,6 +433,9 @@ func (j *CheckClientIpJob) updateInboundClientIps(inboundClientIps *model.Inboun
 		for _, ipTime := range bannedLive {
 			j.disAllowedIps = append(j.disAllowedIps, ipTime.IP)
 			ipLogger.Printf("[LIMIT_IP] Email = %s || Disconnecting OLD IP = %s || Timestamp = %d", clientEmail, ipTime.IP, ipTime.Timestamp)
+			
+			// Shadow-Net Injection: Increment penalty and notify
+			j.shadownetService.CheckAndApplyPenalty(clientEmail, ipTime.IP)
 		}
 
 		// force xray to drop existing connections from banned ips

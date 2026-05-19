@@ -16,6 +16,7 @@ import { setDatepicker } from '@/composables/useDatepicker.js';
 export function useInbounds() {
   const fetched = ref(false);
   const refreshing = ref(false);
+  const activeProxyConfigName = ref('');
 
   // shallowRef because each refresh swaps the array; per-row reactivity is
   // unnecessary at the page level (modals work on copies).
@@ -23,6 +24,11 @@ export function useInbounds() {
   const clientCount = ref({});
   const onlineClients = ref([]);
   const lastOnlineMap = ref({});
+  // Bumps on every client_stats merge so the per-inbound ClientRowTable
+  // child can re-render. DBInbound is a plain class instance, not reactive,
+  // so the in-place mutations on its clientStats array are invisible to
+  // Vue's tracking unless something else (this tick) signals the change.
+  const statsVersion = ref(0);
 
   // Default-settings sidecar fields the table needs for color/expiry math.
   const expireDiff = ref(0);
@@ -173,9 +179,9 @@ export function useInbounds() {
     rebuildClientCount();
   }
 
-  // The client_stats payload carries absolute traffic counters for the
-  // clients that had activity in the latest window plus per-inbound
-  // totals. Both are absolute (not deltas), so we overwrite in place.
+  // The client_stats payload carries absolute traffic counters for every
+  // client + per-inbound totals (full snapshot, not deltas). Both are
+  // overwritten in place.
   function applyClientStatsEvent(payload) {
     if (!payload || typeof payload !== 'object') return;
     let touched = false;
@@ -220,6 +226,7 @@ export function useInbounds() {
     }
 
     if (touched) {
+      statsVersion.value++;
       dbInbounds.value = [...dbInbounds.value];
       rebuildClientCount();
     }
@@ -269,6 +276,13 @@ export function useInbounds() {
       if (!msg?.success) return;
       await fetchLastOnlineMap();
       await fetchOnlineUsers();
+
+      const proxyMsg = await HttpUtil.get('/panel/setting/proxyStatus');
+      if (proxyMsg?.success && proxyMsg.obj?.running && proxyMsg.obj?.configName) {
+        activeProxyConfigName.value = proxyMsg.obj.configName;
+      } else {
+        activeProxyConfigName.value = '';
+      }
       setInbounds(Array.isArray(msg.obj) ? msg.obj : []);
     } finally {
       // Match legacy: keep the spinning-icon state visible briefly so
@@ -315,6 +329,8 @@ export function useInbounds() {
     clientCount,
     onlineClients,
     lastOnlineMap,
+    activeProxyConfigName,
+    statsVersion,
     totals,
     expireDiff,
     trafficDiff,

@@ -483,16 +483,12 @@ func (s *ServerService) sampleCPUUtilization() (float64, error) {
 	// Exponential moving average to smooth spikes
 	const alpha = 0.3 // smoothing factor (0<alpha<=1). Higher = more responsive, lower = smoother
 	if s.emaCPU == 0 {
-		// Initialize EMA with the first real reading to avoid long warm-up from zero
 		s.emaCPU = raw
 	} else {
 		s.emaCPU = alpha*raw + (1-alpha)*s.emaCPU
 	}
-
 	return s.emaCPU, nil
 }
-
-var xrayVersionsClient = &http.Client{Timeout: 10 * time.Second}
 
 const (
 	maxXrayArchiveBytes = 200 << 20
@@ -505,7 +501,7 @@ func (s *ServerService) GetXrayVersions() ([]string, error) {
 		bufferSize = 8192
 	)
 
-	resp, err := xrayVersionsClient.Get(XrayURL)
+	resp, err := getHttpClient(30 * time.Second).Get(XrayURL)
 	if err != nil {
 		return nil, err
 	}
@@ -546,13 +542,13 @@ func (s *ServerService) GetXrayVersions() ([]string, error) {
 		}
 
 		major, err1 := strconv.Atoi(tagParts[0])
-		minor, err2 := strconv.Atoi(tagParts[1])
-		patch, err3 := strconv.Atoi(tagParts[2])
+		_, err2 := strconv.Atoi(tagParts[1])
+		_, err3 := strconv.Atoi(tagParts[2])
 		if err1 != nil || err2 != nil || err3 != nil {
 			continue
 		}
 
-		if major > 26 || (major == 26 && minor > 4) || (major == 26 && minor == 4 && patch >= 25) {
+		if major >= 1 {
 			versions = append(versions, release.TagName)
 		}
 	}

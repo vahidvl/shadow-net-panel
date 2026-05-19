@@ -49,6 +49,16 @@ type AllSetting struct {
 	TgCpu            int    `json:"tgCpu" form:"tgCpu"`                       // CPU usage threshold for alerts
 	TgLang           string `json:"tgLang" form:"tgLang"`                     // Telegram bot language
 
+	// Shadow-Net settings
+	SnBotTokenSales    string `json:"snBotTokenSales" form:"snBotTokenSales"`       // Shadow-Net Sales bot token
+	SnBotTokenSentinel string `json:"snBotTokenSentinel" form:"snBotTokenSentinel"` // Shadow-Net Sentinel bot token
+	SnBotTokenAdmin    string `json:"snBotTokenAdmin" form:"snBotTokenAdmin"`       // Shadow-Net Admin bot token
+	SnAdminChatId      string `json:"snAdminChatId" form:"snAdminChatId"`           // Shadow-Net Admin chat ID
+	SnMaxPenalty       int    `json:"snMaxPenalty" form:"snMaxPenalty"`             // Maximum penalty strikes
+	SnPanelProxyEnable bool   `json:"snPanelProxyEnable" form:"snPanelProxyEnable"` // Enable proxy for panel outbound requests
+	SnPanelProxyURL    string `json:"snPanelProxyURL" form:"snPanelProxyURL"`       // Proxy URL for panel outbound requests
+	SnPanelProxyHistory string `json:"snPanelProxyHistory" form:"snPanelProxyHistory"` // Saved panel proxy configurations
+
 	// Security settings
 	TimeLocation    string `json:"timeLocation" form:"timeLocation"`       // Time zone location
 	TwoFactorEnable bool   `json:"twoFactorEnable" form:"twoFactorEnable"` // Enable two-factor authentication
@@ -124,6 +134,9 @@ type AllSettingView struct {
 	HasApiToken       bool `json:"hasApiToken"`
 	HasWarpSecret     bool `json:"hasWarpSecret"`
 	HasNordSecret     bool `json:"hasNordSecret"`
+	HasSnBotTokenSales    bool `json:"hasSnBotTokenSales"`
+	HasSnBotTokenSentinel bool `json:"hasSnBotTokenSentinel"`
+	HasSnBotTokenAdmin    bool `json:"hasSnBotTokenAdmin"`
 }
 
 // CheckValid validates all settings in the AllSetting struct, checking IP addresses, ports, SSL certificates, and other configuration values.

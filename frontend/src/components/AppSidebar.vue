@@ -15,6 +15,8 @@ import {
 
 import { theme, currentTheme, toggleTheme, toggleUltra, pauseAnimationsUntilLeave } from '@/composables/useTheme.js';
 import { HttpUtil } from '@/utils';
+import ProxyStatus from './ProxyStatus.vue';
+import ProxyHeaderBadge from './ProxyHeaderBadge.vue';
 
 const { t } = useI18n();
 
@@ -103,7 +105,8 @@ function cycleTheme() {
   <div class="ant-sidebar">
     <a-layout-sider :theme="currentTheme" collapsible :collapsed="collapsed" breakpoint="md" @collapse="onCollapse">
       <div class="sider-brand" :class="{ 'sider-brand-collapsed': collapsed }">
-        <span class="brand-text">{{ collapsed ? '3X' : '3X-UI' }}</span>
+        <span class="brand-text" v-if="!collapsed">3X-UI</span>
+        <ProxyHeaderBadge />
         <button v-if="!collapsed" id="theme-cycle" type="button" class="theme-cycle" :aria-label="t('menu.theme')"
           :title="t('menu.theme')" @click="cycleTheme">
           <svg v-if="!theme.isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -130,6 +133,10 @@ function cycleTheme() {
           <span>{{ tab.title }}</span>
         </a-menu-item>
       </a-menu>
+      <!-- Proxy status sits just above logout, only when sidebar is expanded -->
+      <div v-if="!collapsed" class="sider-proxy-status">
+        <ProxyStatus />
+      </div>
       <a-menu :theme="currentTheme" mode="inline" :selected-keys="activeTab" class="sider-utility"
         @click="({ key }) => openLink(key)">
         <a-menu-item v-for="tab in utilTabs" :key="tab.key">
@@ -146,6 +153,7 @@ function cycleTheme() {
       <div class="drawer-header">
         <span class="drawer-brand">3X-UI</span>
         <div class="drawer-header-actions">
+          <ProxyHeaderBadge />
           <button id="theme-cycle-drawer" type="button" class="theme-cycle" :aria-label="t('menu.theme')"
             :title="t('menu.theme')" @click="cycleTheme">
             <svg v-if="!theme.isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -176,6 +184,10 @@ function cycleTheme() {
           <span>{{ tab.title }}</span>
         </a-menu-item>
       </a-menu>
+      <!-- Proxy status sits just above logout in the drawer too -->
+      <div class="drawer-proxy-status">
+        <ProxyStatus style="width: 100%;" />
+      </div>
       <a-menu :theme="currentTheme" mode="inline" :selected-keys="activeTab" class="drawer-menu drawer-utility"
         @click="({ key }) => openLink(key)">
         <a-menu-item v-for="tab in utilTabs" :key="tab.key">
@@ -189,6 +201,10 @@ function cycleTheme() {
       @click="toggleDrawer">
       <MenuOutlined />
     </button>
+
+    <div class="mobile-floating-badge" v-show="!drawerOpen">
+      <ProxyHeaderBadge />
+    </div>
   </div>
 </template>
 
@@ -369,6 +385,58 @@ function cycleTheme() {
     max-width: 0 !important;
     min-width: 0 !important;
     width: 0 !important;
+  }
+}
+
+.sider-proxy-status {
+  padding: 8px 14px;
+  border-top: 1px solid rgba(128, 128, 128, 0.15);
+  border-bottom: none;
+  display: flex;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.drawer-proxy-status {
+  padding: 8px 16px;
+  border-top: 1px solid rgba(128, 128, 128, 0.15);
+  flex: 0 0 auto;
+  display: flex;
+}
+
+.mobile-floating-badge {
+  display: none;
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1050;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 4px;
+  border-radius: 50%;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+  width: 36px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+}
+
+body.dark .mobile-floating-badge {
+  background: rgba(37, 37, 38, 0.9);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+html[data-theme='ultra-dark'] .mobile-floating-badge {
+  background: rgba(10, 10, 10, 0.9);
+  border-color: rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.6);
+}
+
+@media (max-width: 768px) {
+  .mobile-floating-badge {
+    display: inline-flex;
   }
 }
 </style>
