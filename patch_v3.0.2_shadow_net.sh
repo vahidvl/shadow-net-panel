@@ -86,12 +86,20 @@ fi
 
 if [[ "$INSTALL_MODE" == "1" ]]; then
     # Mode 1: Precompiled Binary Overlay
-    log_info "Downloading precompiled Shadow-Net binary..."
-    if ! wget -q --show-progress -O "$XUI_DIR/x-ui.new" "$PRECOMPILED_URL"; then
-        # Try curl if wget failed
-        if ! curl -L -o "$XUI_DIR/x-ui.new" "$PRECOMPILED_URL"; then
-            log_error "Failed to download precompiled binary."
-            exit 1
+    if [[ -f "/root/x-ui-linux-amd64" ]]; then
+        log_info "Using local precompiled binary from /root/x-ui-linux-amd64..."
+        cp "/root/x-ui-linux-amd64" "$XUI_DIR/x-ui.new"
+    elif [[ -f "$(dirname "$0")/x-ui-linux-amd64" ]]; then
+        log_info "Using local precompiled binary from $(dirname "$0")/x-ui-linux-amd64..."
+        cp "$(dirname "$0")/x-ui-linux-amd64" "$XUI_DIR/x-ui.new"
+    else
+        log_info "Downloading precompiled Shadow-Net binary..."
+        if ! wget -q --show-progress -O "$XUI_DIR/x-ui.new" "$PRECOMPILED_URL"; then
+            # Try curl if wget failed
+            if ! curl -L -o "$XUI_DIR/x-ui.new" "$PRECOMPILED_URL"; then
+                log_error "Failed to download precompiled binary."
+                exit 1
+            fi
         fi
     fi
     
