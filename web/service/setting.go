@@ -120,6 +120,15 @@ var defaultValueMap = map[string]string{
 	"snPanelProxyEnable":    "false",
 	"snPanelProxyURL":       "",
 	"snPanelProxyHistory":   "[]",
+	"snBotEnableTrial":      "true",
+	"snBotTrialVolumeMb":    "1024",
+	"snBotTrialExpiryHours": "24",
+	"snBotTrialIpLimit":     "2",
+	"snBotEnableZibal":      "true",
+	"snBotEnableCardToCard": "true",
+	"snBotSupportEnabled":   "true",
+	"snBotCardNumber":       "6037997912345678",
+	"snBotCardOwner":        "Vahid",
 }
 
 // SettingService provides business logic for application settings management.
@@ -1076,3 +1085,44 @@ func (s *SettingService) GetDefaultSettings(host string) (any, error) {
 
 	return result, nil
 }
+
+func (s *SettingService) GetSnBotEnableTrial() (bool, error) {
+	return s.getBool("snBotEnableTrial")
+}
+
+func (s *SettingService) GetSnBotTrialVolumeMb() (int, error) {
+	return s.getInt("snBotTrialVolumeMb")
+}
+
+func (s *SettingService) GetSnBotTrialExpiryHours() (int, error) {
+	return s.getInt("snBotTrialExpiryHours")
+}
+
+func (s *SettingService) GetSnBotTrialIpLimit() (int, error) {
+	return s.getInt("snBotTrialIpLimit")
+}
+
+func (s *SettingService) GetSnBotEnableZibal() (bool, error) {
+	return s.getBool("snBotEnableZibal")
+}
+
+func (s *SettingService) GetSnBotEnableCardToCard() (bool, error) {
+	return s.getBool("snBotEnableCardToCard")
+}
+
+func (s *SettingService) GetSnBotSupportEnabled() (bool, error) {
+	return s.getBool("snBotSupportEnabled")
+}
+
+func (s *SettingService) GetSnBotCardNumber() (string, error) {
+	return s.getString("snBotCardNumber")
+}
+
+func (s *SettingService) GetSnBotCardOwner() (string, error) {
+	return s.getString("snBotCardOwner")
+}
+
+func (s *SettingService) GetSnBotTokenAdmin() (string, error) {
+	return s.getString("snBotTokenAdmin")
+}
+

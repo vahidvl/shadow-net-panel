@@ -42,6 +42,11 @@ func initModels() error {
 		&model.CustomGeoResource{},
 		&model.Node{},
 		&model.ApiToken{},
+		&model.BotPlan{},
+		&model.BotSession{},
+		&model.PendingTransaction{},
+		&model.TrialLog{},
+		&model.Violation{},
 	}
 	for _, mdl := range models {
 		if err := db.AutoMigrate(mdl); err != nil {

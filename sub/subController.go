@@ -140,12 +140,31 @@ func (a *SUBController) subs(c *gin.Context) {
 		}
 		a.ApplyCommonHeaders(c, header, a.updateInterval, a.subTitle, a.subSupportUrl, profileUrl, a.subAnnounce, a.subEnableRouting, a.subRoutingRules)
 
+		result = a.appendExtraNodes(result)
+
 		if a.subEncrypt {
 			c.String(200, base64.StdEncoding.EncodeToString([]byte(result)))
 		} else {
 			c.String(200, result)
 		}
 	}
+}
+
+func (a *SUBController) appendExtraNodes(result string) string {
+	extraFile := "extra_nodes.txt"
+	if _, err := os.Stat(extraFile); err == nil {
+		if content, readErr := os.ReadFile(extraFile); readErr == nil {
+			extra := string(content)
+			lines := strings.Split(extra, "\n")
+			for _, line := range lines {
+				line = strings.TrimSpace(line)
+				if line != "" && !strings.HasPrefix(line, "#") {
+					result += line + "\n"
+				}
+			}
+		}
+	}
+	return result
 }
 
 // serveSubPage renders web/dist/subpage.html for the current subscription

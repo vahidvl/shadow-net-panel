@@ -234,6 +234,13 @@ func (s *Server) initRouter() (*gin.Engine, error) {
 	s.panel = controller.NewXUIController(g)
 	s.api = controller.NewAPIController(g, s.customGeoService)
 
+	// Bot API for external Python bots (direct engine access)
+	controller.NewBotController(engine.Group("/api"))
+	// Bot API for panel UI and internal operations (subject to basePath cookies)
+	if basePath != "" && basePath != "/" {
+		controller.NewBotController(g.Group("/api"))
+	}
+
 	// Initialize WebSocket hub
 	s.wsHub = websocket.NewHub()
 	go s.wsHub.Run()

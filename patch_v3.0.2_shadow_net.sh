@@ -37,9 +37,21 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 # CONSTANTS & PATHS
-DB_PATH="/etc/3x-ui/3x-ui.db"
 XUI_DIR="/usr/local/x-ui"
-BACKUP_DIR="/etc/3x-ui/backups/shadow_net_$(date +%Y%m%d_%H%M%S)"
+
+# Dynamically detect active database directory and path
+if [[ -f "/etc/x-ui/x-ui.db" ]]; then
+    DB_PATH="/etc/x-ui/x-ui.db"
+    DB_DIR="/etc/x-ui"
+elif [[ -f "/etc/3x-ui/3x-ui.db" ]]; then
+    DB_PATH="/etc/3x-ui/3x-ui.db"
+    DB_DIR="/etc/3x-ui"
+else
+    DB_PATH="/etc/x-ui/x-ui.db"
+    DB_DIR="/etc/x-ui"
+fi
+
+BACKUP_DIR="${DB_DIR}/backups/shadow_net_$(date +%Y%m%d_%H%M%S)"
 PATCH_URL="https://raw.githubusercontent.com/vahidvl/shadow-net-panel/main/shadow-net-v3.0.2.patch"
 PRECOMPILED_URL="https://github.com/vahidvl/shadow-net-panel/releases/download/v3.0.2-stealth/x-ui-linux-amd64"
 

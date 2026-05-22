@@ -58,6 +58,15 @@ type AllSetting struct {
 	SnPanelProxyEnable bool   `json:"snPanelProxyEnable" form:"snPanelProxyEnable"` // Enable proxy for panel outbound requests
 	SnPanelProxyURL    string `json:"snPanelProxyURL" form:"snPanelProxyURL"`       // Proxy URL for panel outbound requests
 	SnPanelProxyHistory string `json:"snPanelProxyHistory" form:"snPanelProxyHistory"` // Saved panel proxy configurations
+	SnBotEnableTrial      bool   `json:"snBotEnableTrial" form:"snBotEnableTrial"`
+	SnBotTrialVolumeMb    int    `json:"snBotTrialVolumeMb" form:"snBotTrialVolumeMb"`
+	SnBotTrialExpiryHours int    `json:"snBotTrialExpiryHours" form:"snBotTrialExpiryHours"`
+	SnBotTrialIpLimit     int    `json:"snBotTrialIpLimit" form:"snBotTrialIpLimit"`
+	SnBotEnableZibal      bool   `json:"snBotEnableZibal" form:"snBotEnableZibal"`
+	SnBotEnableCardToCard bool   `json:"snBotEnableCardToCard" form:"snBotEnableCardToCard"`
+	SnBotSupportEnabled   bool   `json:"snBotSupportEnabled" form:"snBotSupportEnabled"`
+	SnBotCardNumber       string `json:"snBotCardNumber" form:"snBotCardNumber"`
+	SnBotCardOwner        string `json:"snBotCardOwner" form:"snBotCardOwner"`
 
 	// Security settings
 	TimeLocation    string `json:"timeLocation" form:"timeLocation"`       // Time zone location

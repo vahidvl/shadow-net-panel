@@ -192,3 +192,50 @@ type Client struct {
 	CreatedAt  int64          `json:"created_at,omitempty"`         // Creation timestamp
 	UpdatedAt  int64          `json:"updated_at,omitempty"`         // Last update timestamp
 }
+
+// BotPlan represents a sales plan/package for the telegram bot.
+type BotPlan struct {
+	Id         int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	Name       string `json:"name"`
+	VolumeGb   int    `json:"volumeGb" gorm:"column:volume_gb"`
+	Days       int    `json:"days"`
+	PriceToman int    `json:"priceToman" gorm:"column:price_toman"`
+	Enabled    int    `json:"enabled" gorm:"default:1"`
+}
+
+// BotSession represents the telegram chat session state.
+type BotSession struct {
+	ChatId    int64  `json:"chatId" gorm:"primaryKey;column:chat_id"`
+	State     string `json:"state"`
+	Data      string `json:"data"` // JSON string
+	UpdatedAt int64  `json:"updatedAt" gorm:"autoUpdateTime;column:updated_at"`
+}
+
+// PendingTransaction represents a card-to-card purchase transaction waiting for admin action.
+type PendingTransaction struct {
+	Id          int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	ChatId      int64  `json:"chatId" gorm:"column:chat_id"`
+	Username    string `json:"username"`
+	PlanId      int    `json:"planId" gorm:"column:plan_id"`
+	Amount      int    `json:"amount"`
+	CardDetails string `json:"cardDetails" gorm:"column:card_details"`
+	Status      string `json:"status" gorm:"default:pending"` // 'pending', 'approved', 'rejected'
+	CreatedAt   int64  `json:"createdAt" gorm:"autoCreateTime;column:created_at"`
+}
+
+// TrialLog tracks users who have requested a trial to prevent abuse.
+type TrialLog struct {
+	ChatId   int64  `json:"chatId" gorm:"primaryKey;column:chat_id"`
+	Username string `json:"username"`
+	IssuedAt int64  `json:"issuedAt" gorm:"autoCreateTime;column:issued_at"`
+}
+
+// Violation represents a sentinel watchdog violation log.
+type Violation struct {
+	Id        int    `json:"id" gorm:"primaryKey;autoIncrement"`
+	Email     string `json:"email"`
+	Ip        string `json:"ip"`
+	Strikes   int    `json:"strikes"`
+	Timestamp int64  `json:"timestamp" gorm:"autoCreateTime;column:timestamp"`
+}
+

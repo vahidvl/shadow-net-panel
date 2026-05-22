@@ -1,8 +1,24 @@
+diff --git a/database/db.go b/database/db.go
+index 89d4106b..af7353c1 100644
+--- a/database/db.go
++++ b/database/db.go
+@@ -42,6 +42,11 @@ func initModels() error {
+ 		&model.CustomGeoResource{},
+ 		&model.Node{},
+ 		&model.ApiToken{},
++		&model.BotPlan{},
++		&model.BotSession{},
++		&model.PendingTransaction{},
++		&model.TrialLog{},
++		&model.Violation{},
+ 	}
+ 	for _, mdl := range models {
+ 		if err := db.AutoMigrate(mdl); err != nil {
 diff --git a/database/model/model.go b/database/model/model.go
-index d71e0589..19c21219 100644
+index d71e0589..f90a52cb 100644
 --- a/database/model/model.go
 +++ b/database/model/model.go
-@@ -188,6 +188,7 @@ type Client struct {
+@@ -188,6 +188,54 @@ type Client struct {
  	SubID      string         `json:"subId" form:"subId"`           // Subscription identifier
  	Comment    string         `json:"comment" form:"comment"`       // Client comment
  	Reset      int            `json:"reset" form:"reset"`           // Reset period in days
@@ -10,6 +26,53 @@ index d71e0589..19c21219 100644
  	CreatedAt  int64          `json:"created_at,omitempty"`         // Creation timestamp
  	UpdatedAt  int64          `json:"updated_at,omitempty"`         // Last update timestamp
  }
++
++// BotPlan represents a sales plan/package for the telegram bot.
++type BotPlan struct {
++	Id         int    `json:"id" gorm:"primaryKey;autoIncrement"`
++	Name       string `json:"name"`
++	VolumeGb   int    `json:"volumeGb" gorm:"column:volume_gb"`
++	Days       int    `json:"days"`
++	PriceToman int    `json:"priceToman" gorm:"column:price_toman"`
++	Enabled    int    `json:"enabled" gorm:"default:1"`
++}
++
++// BotSession represents the telegram chat session state.
++type BotSession struct {
++	ChatId    int64  `json:"chatId" gorm:"primaryKey;column:chat_id"`
++	State     string `json:"state"`
++	Data      string `json:"data"` // JSON string
++	UpdatedAt int64  `json:"updatedAt" gorm:"autoUpdateTime;column:updated_at"`
++}
++
++// PendingTransaction represents a card-to-card purchase transaction waiting for admin action.
++type PendingTransaction struct {
++	Id          int    `json:"id" gorm:"primaryKey;autoIncrement"`
++	ChatId      int64  `json:"chatId" gorm:"column:chat_id"`
++	Username    string `json:"username"`
++	PlanId      int    `json:"planId" gorm:"column:plan_id"`
++	Amount      int    `json:"amount"`
++	CardDetails string `json:"cardDetails" gorm:"column:card_details"`
++	Status      string `json:"status" gorm:"default:pending"` // 'pending', 'approved', 'rejected'
++	CreatedAt   int64  `json:"createdAt" gorm:"autoCreateTime;column:created_at"`
++}
++
++// TrialLog tracks users who have requested a trial to prevent abuse.
++type TrialLog struct {
++	ChatId   int64  `json:"chatId" gorm:"primaryKey;column:chat_id"`
++	Username string `json:"username"`
++	IssuedAt int64  `json:"issuedAt" gorm:"autoCreateTime;column:issued_at"`
++}
++
++// Violation represents a sentinel watchdog violation log.
++type Violation struct {
++	Id        int    `json:"id" gorm:"primaryKey;autoIncrement"`
++	Email     string `json:"email"`
++	Ip        string `json:"ip"`
++	Strikes   int    `json:"strikes"`
++	Timestamp int64  `json:"timestamp" gorm:"autoCreateTime;column:timestamp"`
++}
++
 diff --git a/frontend/package-lock.json b/frontend/package-lock.json
 index aa68ab6d..af920e44 100644
 --- a/frontend/package-lock.json
@@ -1252,7 +1315,7 @@ index ed310672..d5301993 100644
 +      });
 +      break;
      default:
-       message.info(`Action "${key}" ΓÇö coming in a later 5f subphase`);
+       message.info(`Action "${key}" — coming in a later 5f subphase`);
    }
 @@ -649,7 +667,7 @@ function onRowAction({ key, dbInbound }) {
                    :last-online-map="lastOnlineMap" :is-dark-theme="themeState.isDark" :expire-diff="expireDiff"
@@ -1342,12 +1405,12 @@ index 052ae727..f551d78e 100644
                  </a-col>
 diff --git a/frontend/src/pages/settings/ShadowNetTab.vue b/frontend/src/pages/settings/ShadowNetTab.vue
 new file mode 100644
-index 00000000..76b232cf
+index 00000000..883e7ce8
 --- /dev/null
 +++ b/frontend/src/pages/settings/ShadowNetTab.vue
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,1104 @@
 +<script setup>
-+import { ref, computed } from 'vue';
++import { ref, computed, onMounted } from 'vue';
 +import { useI18n } from 'vue-i18n';
 +import { 
 +  ThunderboltOutlined,
@@ -1357,7 +1420,13 @@ index 00000000..76b232cf
 +  PlusOutlined,
 +  CheckCircleOutlined,
 +  GlobalOutlined,
-+  CloseCircleOutlined
++  CloseCircleOutlined,
++  SettingOutlined,
++  WalletOutlined,
++  ReloadOutlined,
++  CheckOutlined,
++  CloseOutlined,
++  InfoCircleOutlined
 +} from '@ant-design/icons-vue';
 +import SettingListItem from '@/components/SettingListItem.vue';
 +import { HttpUtil } from '@/utils';
@@ -1369,6 +1438,9 @@ index 00000000..76b232cf
 +  allSetting: { type: Object, required: true },
 +});
 +
++const basePath = window.X_UI_BASE_PATH || '';
++
++// Proxy state
 +const testingProxy = ref(false);
 +const proxyTestResult = ref(null);
 +
@@ -1515,10 +1587,174 @@ index 00000000..76b232cf
 +  updateHistory(currentList);
 +  message.success(`Proxy "${item.remark}" removed from history.`);
 +}
++
++// Bot Plans State & CRUD
++const plans = ref([]);
++const loadingPlans = ref(false);
++const planModalVisible = ref(false);
++const planModalMode = ref('add'); // 'add' or 'edit'
++const planFormState = ref({
++  id: 0,
++  name: '',
++  volume_gb: 50,
++  days: 30,
++  price_toman: 50000,
++  enabled: 1
++});
++
++async function fetchPlans() {
++  loadingPlans.value = true;
++  try {
++    const res = await HttpUtil.get(basePath + 'api/bot/config');
++    if (res?.status === 'success' || res?.plans) {
++      plans.value = res.plans || [];
++    } else if (res?.success) {
++      // In case HttpUtil wrapped it in Msg
++      plans.value = res.obj?.plans || [];
++    }
++  } catch (err) {
++    message.error('Failed to load plans');
++  } finally {
++    loadingPlans.value = false;
++  }
++}
++
++function showAddPlanModal() {
++  planModalMode.value = 'add';
++  planFormState.value = {
++    id: 0,
++    name: '',
++    volume_gb: 50,
++    days: 30,
++    price_toman: 50000,
++    enabled: 1
++  };
++  planModalVisible.value = true;
++}
++
++function showEditPlanModal(plan) {
++  planModalMode.value = 'edit';
++  planFormState.value = {
++    id: plan.id,
++    name: plan.name,
++    volume_gb: plan.volume_gb,
++    days: plan.days,
++    price_toman: plan.price_toman,
++    enabled: plan.enabled === undefined ? 1 : plan.enabled
++  };
++  planModalVisible.value = true;
++}
++
++async function handlePlanModalOk() {
++  if (!planFormState.value.name.trim()) {
++    message.error('Please enter package name');
++    return;
++  }
++
++  const payload = {
++    ...planFormState.value,
++    action: planModalMode.value
++  };
++
++  try {
++    const res = await HttpUtil.post(basePath + 'api/bot/plans/manage', payload);
++    if (res?.status === 'success' || res?.success) {
++      message.success(`Package successfully ${planModalMode.value === 'add' ? 'created' : 'updated'}!`);
++      planModalVisible.value = false;
++      fetchPlans();
++    } else {
++      message.error(res?.msg || 'Failed to save plan');
++    }
++  } catch (err) {
++    message.error('Error saving plan: ' + err.message);
++  }
++}
++
++async function deletePlan(planId) {
++  try {
++    const res = await HttpUtil.post(basePath + 'api/bot/plans/manage', {
++      id: planId,
++      action: 'delete'
++    });
++    if (res?.status === 'success' || res?.success) {
++      message.success('Package deleted successfully');
++      fetchPlans();
++    } else {
++      message.error(res?.msg || 'Failed to delete plan');
++    }
++  } catch (err) {
++    message.error('Error deleting plan: ' + err.message);
++  }
++}
++
++async function togglePlanStatus(plan) {
++  try {
++    const res = await HttpUtil.post(basePath + 'api/bot/plans/manage', {
++      id: plan.id,
++      action: 'toggle'
++    });
++    if (res?.status === 'success' || res?.success) {
++      message.success('Package status toggled successfully');
++      fetchPlans();
++    } else {
++      message.error(res?.msg || 'Failed to toggle status');
++    }
++  } catch (err) {
++    message.error('Error toggling status: ' + err.message);
++  }
++}
++
++// Pending Transactions State
++const pendingTxs = ref([]);
++const loadingTxs = ref(false);
++
++async function fetchPendingTxs() {
++  loadingTxs.value = true;
++  try {
++    const res = await HttpUtil.get(basePath + 'api/transactions/pending');
++    // HttpUtil might return Msg or raw array
++    if (Array.isArray(res)) {
++      pendingTxs.value = res;
++    } else if (res?.obj && Array.isArray(res.obj)) {
++      pendingTxs.value = res.obj;
++    } else if (res?.data && Array.isArray(res.data)) {
++      pendingTxs.value = res.data;
++    } else {
++      pendingTxs.value = [];
++    }
++  } catch (err) {
++    message.error('Failed to load pending transactions');
++  } finally {
++    loadingTxs.value = false;
++  }
++}
++
++async function processTransaction(txId, action) {
++  try {
++    const res = await HttpUtil.post(basePath + 'api/transactions/action', {
++      transaction_id: txId,
++      action: action
++    });
++    if (res?.status === 'success' || res?.success) {
++      message.success(`Transaction ${action === 'approve' ? 'approved' : 'rejected'} successfully!`);
++      fetchPendingTxs();
++    } else {
++      message.error(res?.msg || 'Failed to process transaction');
++    }
++  } catch (err) {
++    message.error('Error processing transaction: ' + err.message);
++  }
++}
++
++onMounted(() => {
++  fetchPlans();
++  fetchPendingTxs();
++});
 +</script>
 +
 +<template>
 +  <a-collapse default-active-key="1">
++    <!-- Collapse 1: Bot APIs & Tokens -->
 +    <a-collapse-panel key="1" header="Shadow-Net Bot Configuration">
 +      <SettingListItem paddings="small">
 +        <template #title>Sales Bot Token</template>
@@ -1562,7 +1798,16 @@ index 00000000..76b232cf
 +      </SettingListItem>
 +    </a-collapse-panel>
 +
-+    <a-collapse-panel key="2" header="Penalty System (3-Strikes)">
++    <!-- Collapse 2: General & Direct Support -->
++    <a-collapse-panel key="2" header="Bot Features & Support Settings">
++      <SettingListItem paddings="small">
++        <template #title>Direct Support Button</template>
++        <template #description>Show a direct support contact button to users inside the bot interface.</template>
++        <template #control>
++          <a-switch v-model:checked="allSetting.snBotSupportEnabled" />
++        </template>
++      </SettingListItem>
++
 +      <SettingListItem paddings="small">
 +        <template #title>Max Penalty Strikes</template>
 +        <template #description>Number of IP limit violations allowed before automatically disabling the account.</template>
@@ -1571,8 +1816,225 @@ index 00000000..76b232cf
 +        </template>
 +      </SettingListItem>
 +    </a-collapse-panel>
-+    
-+    <a-collapse-panel key="3" header="Panel Outbound Proxy (Global Connectivity)">
++
++    <!-- Collapse 3: Free Trial System Configuration -->
++    <a-collapse-panel key="3" header="Free Trial Package Configuration">
++      <SettingListItem paddings="small">
++        <template #title>Enable Free Trial</template>
++        <template #description>Allow new users to request a free trial subscription.</template>
++        <template #control>
++          <a-switch v-model:checked="allSetting.snBotEnableTrial" />
++        </template>
++      </SettingListItem>
++
++      <transition name="fade">
++        <div v-if="allSetting.snBotEnableTrial" class="trial-details-panel">
++          <SettingListItem paddings="small">
++            <template #title>Trial Volume (MB)</template>
++            <template #description>Data limit allocated for trial subscriptions.</template>
++            <template #control>
++              <a-input-number v-model:value="allSetting.snBotTrialVolumeMb" :min="100" :style="{ width: '100%' }" />
++            </template>
++          </SettingListItem>
++
++          <SettingListItem paddings="small">
++            <template #title>Trial Duration (Hours)</template>
++            <template #description>Validity duration of the trial before expiration.</template>
++            <template #control>
++              <a-input-number v-model:value="allSetting.snBotTrialExpiryHours" :min="1" :style="{ width: '100%' }" />
++            </template>
++          </SettingListItem>
++
++          <SettingListItem paddings="small">
++            <template #title>Trial IP Limit</template>
++            <template #description>Maximum number of concurrent IPs allowed to use the trial subscription.</template>
++            <template #control>
++              <a-input-number v-model:value="allSetting.snBotTrialIpLimit" :min="1" :max="5" :style="{ width: '100%' }" />
++            </template>
++          </SettingListItem>
++        </div>
++      </transition>
++    </a-collapse-panel>
++
++    <!-- Collapse 4: Payments Configuration -->
++    <a-collapse-panel key="4" header="Payment Methods & Gateways">
++      <SettingListItem paddings="small">
++        <template #title>Enable Online Payment Gateway (Zibal)</template>
++        <template #description>Allow users to pay online using the Zibal gateway.</template>
++        <template #control>
++          <a-switch v-model:checked="allSetting.snBotEnableZibal" />
++        </template>
++      </SettingListItem>
++
++      <SettingListItem paddings="small">
++        <template #title>Enable Card-to-Card Payment</template>
++        <template #description>Allow users to buy packages via manual card transfer and upload bank receipt.</template>
++        <template #control>
++          <a-switch v-model:checked="allSetting.snBotEnableCardToCard" />
++        </template>
++      </SettingListItem>
++
++      <transition name="fade">
++        <div v-if="allSetting.snBotEnableCardToCard" class="card-details-panel">
++          <SettingListItem paddings="small">
++            <template #title>Bank Card Number</template>
++            <template #description>16-digit card number displayed to users for transfer.</template>
++            <template #control>
++              <a-input v-model:value="allSetting.snBotCardNumber" placeholder="e.g. 6037997912345678" />
++            </template>
++          </SettingListItem>
++
++          <SettingListItem paddings="small">
++            <template #title>Cardholder Full Name</template>
++            <template #description>Account owner name displayed for card validation.</template>
++            <template #control>
++              <a-input v-model:value="allSetting.snBotCardOwner" placeholder="e.g. Vahid ..." />
++            </template>
++          </SettingListItem>
++        </div>
++      </transition>
++    </a-collapse-panel>
++
++    <!-- Collapse 5: Bot Plans/Packages Management -->
++    <a-collapse-panel key="5" header="Sales Packages & Plans">
++      <div class="plans-section-container">
++        <div class="section-action-header">
++          <span class="custom-sec-title"><WalletOutlined /> Subscription Packages</span>
++          <a-space>
++            <a-button type="default" size="small" :loading="loadingPlans" @click="fetchPlans">
++              <template #icon><ReloadOutlined /></template> Refresh
++            </a-button>
++            <a-button type="primary" size="small" @click="showAddPlanModal">
++              <template #icon><PlusOutlined /></template> Create Package
++            </a-button>
++          </a-space>
++        </div>
++
++        <div v-if="plans.length === 0" class="empty-list-placeholder">
++          No subscription packages configured. Create one to display packages in the sales bot.
++        </div>
++
++        <div v-else class="plans-grid">
++          <div 
++            v-for="plan in plans" 
++            :key="plan.id" 
++            class="plan-item-card"
++            :class="{ 'plan-disabled': plan.enabled !== 1 }"
++          >
++            <div class="plan-card-header">
++              <span class="plan-card-name">{{ plan.name }}</span>
++              <a-tag :color="plan.enabled === 1 ? 'success' : 'default'">
++                {{ plan.enabled === 1 ? 'Active' : 'Inactive' }}
++              </a-tag>
++            </div>
++            <div class="plan-card-metrics">
++              <div class="metric-row">
++                <span class="metric-label">Volume:</span>
++                <span class="metric-value">{{ plan.volume_gb > 0 ? plan.volume_gb + ' GB' : 'Unlimited' }}</span>
++              </div>
++              <div class="metric-row">
++                <span class="metric-label">Duration:</span>
++                <span class="metric-value">{{ plan.days > 0 ? plan.days + ' Days' : 'Lifetime' }}</span>
++              </div>
++              <div class="metric-row">
++                <span class="metric-label">Price:</span>
++                <span class="metric-value highlight-price">{{ plan.price_toman.toLocaleString() }} Toman</span>
++              </div>
++            </div>
++            <div class="plan-card-footer">
++              <a-button size="small" type="default" @click="showEditPlanModal(plan)">
++                <template #icon><EditOutlined /></template> Edit
++              </a-button>
++              <a-space>
++                <a-button 
++                  size="small" 
++                  :type="plan.enabled === 1 ? 'default' : 'primary'"
++                  @click="togglePlanStatus(plan)"
++                >
++                  {{ plan.enabled === 1 ? 'Deactivate' : 'Activate' }}
++                </a-button>
++                <a-popconfirm
++                  title="Are you sure you want to delete this subscription package?"
++                  ok-text="Yes"
++                  cancel-text="No"
++                  @confirm="deletePlan(plan.id)"
++                >
++                  <a-button size="small" type="primary" danger>
++                    <template #icon><DeleteOutlined /></template> Delete
++                  </a-button>
++                </a-popconfirm>
++              </a-space>
++            </div>
++          </div>
++        </div>
++      </div>
++    </a-collapse-panel>
++
++    <!-- Collapse 6: Pending bank receipt approvals -->
++    <a-collapse-panel key="6" header="Pending Bank Receipts Approval">
++      <div class="txs-section-container">
++        <div class="section-action-header">
++          <span class="custom-sec-title"><InfoCircleOutlined /> Pending Receipts Queue</span>
++          <a-button type="default" size="small" :loading="loadingTxs" @click="fetchPendingTxs">
++            <template #icon><ReloadOutlined /></template> Refresh Queue
++          </a-button>
++        </div>
++
++        <div v-if="pendingTxs.length === 0" class="empty-list-placeholder">
++          No bank receipts pending review. High-five!
++        </div>
++
++        <div v-else class="txs-list">
++          <div 
++            v-for="tx in pendingTxs" 
++            :key="tx.id" 
++            class="tx-item-card"
++          >
++            <div class="tx-card-meta-grid">
++              <div class="tx-meta-col">
++                <span class="tx-meta-label">Transaction ID</span>
++                <span class="tx-meta-val">#{{ tx.id }}</span>
++              </div>
++              <div class="tx-meta-col">
++                <span class="tx-meta-label">Telegram Username</span>
++                <span class="tx-meta-val">@{{ tx.username || 'No Username' }} (<code>{{ tx.chat_id }}</code>)</span>
++              </div>
++              <div class="tx-meta-col">
++                <span class="tx-meta-label">Requested Package</span>
++                <span class="tx-meta-val">Plan ID: {{ tx.plan_id }} ({{ tx.amount.toLocaleString() }} Toman)</span>
++              </div>
++              <div class="tx-meta-col">
++                <span class="tx-meta-label">Bank Receipt Details</span>
++                <span class="tx-meta-val text-ellipsis" :title="tx.card_details">{{ tx.card_details }}</span>
++              </div>
++              <div class="tx-meta-col">
++                <span class="tx-meta-label">Submitted At</span>
++                <span class="tx-meta-val">{{ new Date(tx.created_at * 1000).toLocaleString('fa-IR') }}</span>
++              </div>
++            </div>
++            <div class="tx-card-actions">
++              <a-popconfirm
++                title="Reject this payment receipt?"
++                ok-text="Reject"
++                cancel-text="Cancel"
++                ok-button-props="{ danger: true }"
++                @confirm="processTransaction(tx.id, 'reject')"
++              >
++                <a-button type="primary" danger size="small">
++                  <template #icon><CloseOutlined /></template> Reject Receipt
++                </a-button>
++              </a-popconfirm>
++              <a-button type="primary" size="small" class="approve-btn" @click="processTransaction(tx.id, 'approve')">
++                <template #icon><CheckOutlined /></template> Approve & Issue Account
++              </a-button>
++            </div>
++          </div>
++        </div>
++      </div>
++    </a-collapse-panel>
++
++    <!-- Collapse 7: Panel Outbound Proxy -->
++    <a-collapse-panel key="7" header="Panel Outbound Proxy (Global Connectivity)">
 +      <div class="proxy-section-container">
 +        <SettingListItem paddings="small">
 +          <template #title>Enable Panel Proxy</template>
@@ -1678,7 +2140,7 @@ index 00000000..76b232cf
 +    </a-collapse-panel>
 +  </a-collapse>
 +
-+  <!-- Add/Edit Modal -->
++  <!-- Add/Edit Proxy Modal -->
 +  <a-modal
 +    v-model:visible="modalVisible"
 +    :title="modalMode === 'add' ? 'Add Proxy Configuration' : 'Edit Proxy Configuration'"
@@ -1699,19 +2161,218 @@ index 00000000..76b232cf
 +      </a-form-item>
 +    </a-form>
 +  </a-modal>
++
++  <!-- Add/Edit Subscription Plan Modal -->
++  <a-modal
++    v-model:visible="planModalVisible"
++    :title="planModalMode === 'add' ? 'Create Subscription Package' : 'Edit Subscription Package'"
++    @ok="handlePlanModalOk"
++    ok-text="Save Package"
++  >
++    <a-form layout="vertical">
++      <a-form-item label="Package Name (Persian/English)">
++        <a-input v-model:value="planFormState.name" placeholder="e.g. ۳ ماهه ۵۰ گیگابایت" />
++      </a-form-item>
++      <a-row :gutter="16">
++        <a-col :span="12">
++          <a-form-item label="Volume Limit (GB) - 0 for Unlimited">
++            <a-input-number v-model:value="planFormState.volume_gb" :min="0" :style="{ width: '100%' }" />
++          </a-form-item>
++        </a-col>
++        <a-col :span="12">
++          <a-form-item label="Duration (Days) - 0 for Lifetime">
++            <a-input-number v-model:value="planFormState.days" :min="0" :style="{ width: '100%' }" />
++          </a-form-item>
++        </a-col>
++      </a-row>
++      <a-row :gutter="16">
++        <a-col :span="12">
++          <a-form-item label="Price (Toman)">
++            <a-input-number v-model:value="planFormState.price_toman" :min="0" :style="{ width: '100%' }" />
++          </a-form-item>
++        </a-col>
++        <a-col :span="12">
++          <a-form-item label="Status">
++            <a-select v-model:value="planFormState.enabled" :style="{ width: '100%' }">
++              <a-select-option :value="1">Active</a-select-option>
++              <a-select-option :value="0">Inactive</a-select-option>
++            </a-select>
++          </a-form-item>
++        </a-col>
++      </a-row>
++    </a-form>
++  </a-modal>
 +</template>
 +
 +<style scoped>
-+.proxy-section-container {
++.proxy-section-container, .plans-section-container, .txs-section-container {
 +  padding: 8px;
 +}
-+.proxy-details {
-+  margin-top: 16px;
++.trial-details-panel, .card-details-panel, .proxy-details {
++  margin-top: 12px;
 +  padding: 16px;
-+  background: rgba(24, 144, 255, 0.05);
++  background: rgba(24, 144, 255, 0.03);
 +  border-radius: 12px;
-+  border: 1px dashed rgba(24, 144, 255, 0.2);
++  border: 1px dashed rgba(24, 144, 255, 0.15);
 +}
++.section-action-header {
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++  margin-bottom: 20px;
++  padding-bottom: 10px;
++  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
++}
++.custom-sec-title {
++  font-size: 15px;
++  font-weight: 600;
++  display: inline-flex;
++  align-items: center;
++  gap: 8px;
++}
++.empty-list-placeholder {
++  padding: 32px;
++  text-align: center;
++  background: rgba(0, 0, 0, 0.01);
++  border-radius: 10px;
++  color: #8c8c8c;
++  font-size: 13px;
++  border: 1px dashed rgba(0, 0, 0, 0.05);
++  margin-bottom: 16px;
++}
++
++/* Plans Grid CSS */
++.plans-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
++  gap: 16px;
++  margin-bottom: 16px;
++}
++.plan-item-card {
++  background: #ffffff;
++  border: 1px solid #e8e8e8;
++  border-radius: 12px;
++  padding: 18px;
++  display: flex;
++  flex-direction: column;
++  justify-content: space-between;
++  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
++  transition: all 0.3s ease;
++}
++.plan-item-card:hover {
++  transform: translateY(-2px);
++  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.06);
++}
++.plan-disabled {
++  opacity: 0.65;
++  background: #fafafa;
++}
++.plan-card-header {
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++  margin-bottom: 14px;
++}
++.plan-card-name {
++  font-size: 16px;
++  font-weight: 700;
++  color: #262626;
++}
++.plan-card-metrics {
++  background: rgba(0, 0, 0, 0.02);
++  border-radius: 8px;
++  padding: 10px 12px;
++  margin-bottom: 16px;
++}
++.metric-row {
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++  font-size: 13px;
++  margin-bottom: 6px;
++}
++.metric-row:last-child {
++  margin-bottom: 0;
++}
++.metric-label {
++  color: #8c8c8c;
++}
++.metric-value {
++  font-weight: 600;
++  color: #595959;
++}
++.highlight-price {
++  color: #389e0a;
++  font-size: 14px;
++  font-weight: 700;
++}
++.plan-card-footer {
++  display: flex;
++  justify-content: space-between;
++  align-items: center;
++}
++
++/* Pending Transactions CSS */
++.txs-list {
++  display: flex;
++  flex-direction: column;
++  gap: 14px;
++  margin-bottom: 16px;
++}
++.tx-item-card {
++  background: #ffffff;
++  border: 1px solid #e8e8e8;
++  border-radius: 12px;
++  padding: 18px;
++  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
++  transition: all 0.25s ease;
++}
++.tx-item-card:hover {
++  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
++}
++.tx-card-meta-grid {
++  display: grid;
++  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
++  gap: 12px;
++  margin-bottom: 16px;
++  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
++  padding-bottom: 14px;
++}
++.tx-meta-col {
++  display: flex;
++  flex-direction: column;
++}
++.tx-meta-label {
++  font-size: 11px;
++  color: #8c8c8c;
++  margin-bottom: 4px;
++  text-transform: uppercase;
++}
++.tx-meta-val {
++  font-size: 13px;
++  font-weight: 600;
++  color: #262626;
++}
++.text-ellipsis {
++  white-space: nowrap;
++  overflow: hidden;
++  text-overflow: ellipsis;
++}
++.tx-card-actions {
++  display: flex;
++  justify-content: flex-end;
++  gap: 12px;
++}
++.approve-btn {
++  background-color: #389e0a;
++  border-color: #389e0a;
++}
++.approve-btn:hover, .approve-btn:focus {
++  background-color: #46bc13 !important;
++  border-color: #46bc13 !important;
++}
++
++/* Outbound Proxy CSS */
 +.test-proxy-wrapper {
 +  margin-top: 16px;
 +}
@@ -1732,7 +2393,7 @@ index 00000000..76b232cf
 +  opacity: 0;
 +}
 +
-+/* History Styles */
++/* Proxy History CSS */
 +.saved-configs-section {
 +  margin-top: 32px;
 +  border-top: 1px solid rgba(0, 0, 0, 0.06);
@@ -1874,6 +2535,1101 @@ index 91d42c19..28bb7ea7 100644
          ws: true,
          changeOrigin: true,
          rewrite: rewriteToBackend,
+diff --git a/sub/subController.go b/sub/subController.go
+index 9c7414c5..bf76c775 100644
+--- a/sub/subController.go
++++ b/sub/subController.go
+@@ -140,6 +140,8 @@ func (a *SUBController) subs(c *gin.Context) {
+ 		}
+ 		a.ApplyCommonHeaders(c, header, a.updateInterval, a.subTitle, a.subSupportUrl, profileUrl, a.subAnnounce, a.subEnableRouting, a.subRoutingRules)
+ 
++		result = a.appendExtraNodes(result)
++
+ 		if a.subEncrypt {
+ 			c.String(200, base64.StdEncoding.EncodeToString([]byte(result)))
+ 		} else {
+@@ -148,6 +150,23 @@ func (a *SUBController) subs(c *gin.Context) {
+ 	}
+ }
+ 
++func (a *SUBController) appendExtraNodes(result string) string {
++	extraFile := "extra_nodes.txt"
++	if _, err := os.Stat(extraFile); err == nil {
++		if content, readErr := os.ReadFile(extraFile); readErr == nil {
++			extra := string(content)
++			lines := strings.Split(extra, "\n")
++			for _, line := range lines {
++				line = strings.TrimSpace(line)
++				if line != "" && !strings.HasPrefix(line, "#") {
++					result += line + "\n"
++				}
++			}
++		}
++	}
++	return result
++}
++
+ // serveSubPage renders web/dist/subpage.html for the current subscription
+ // request. The Vite-built SPA reads window.__SUB_PAGE_DATA__ on mount —
+ // we inject that here, along with window.X_UI_BASE_PATH so the
+diff --git a/web/controller/bot_controller.go b/web/controller/bot_controller.go
+new file mode 100644
+index 00000000..5edfb7a5
+--- /dev/null
++++ b/web/controller/bot_controller.go
+@@ -0,0 +1,1052 @@
++package controller
++
++import (
++	"bytes"
++	"encoding/json"
++	"fmt"
++	"net/http"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/google/uuid"
++	"github.com/mhsanaei/3x-ui/v3/database"
++	"github.com/mhsanaei/3x-ui/v3/database/model"
++	"github.com/mhsanaei/3x-ui/v3/web/service"
++	"github.com/mhsanaei/3x-ui/v3/web/session"
++	"github.com/mhsanaei/3x-ui/v3/xray"
++
++	"github.com/gin-gonic/gin"
++	"github.com/skip2/go-qrcode"
++	"gorm.io/gorm"
++)
++
++type BotController struct {
++	inboundService service.InboundService
++	settingService service.SettingService
++	xrayService    service.XrayService
++}
++
++func NewBotController(g *gin.RouterGroup) *BotController {
++	a := &BotController{}
++	a.initRouter(g)
++	return a
++}
++
++func (a *BotController) checkBotAPIAuth(c *gin.Context) {
++	apiKey := c.GetHeader("X-API-Key")
++	if apiKey == "ShadowNet_Secret_2026" {
++		c.Next()
++		return
++	}
++	if session.IsLogin(c) {
++		c.Next()
++		return
++	}
++	c.AbortWithStatus(http.StatusForbidden)
++}
++
++func (a *BotController) initRouter(g *gin.RouterGroup) {
++	g.GET("/violations", a.checkBotAPIAuth, a.getViolations)
++	g.POST("/clients/reset_penalty", a.checkBotAPIAuth, a.resetPenalty)
++	g.GET("/clients/info", a.checkBotAPIAuth, a.getClientInfo)
++	g.POST("/clients/add", a.checkBotAPIAuth, a.addClient)
++	g.GET("/qrcode", a.getQRCode)
++	g.GET("/bot/config", a.getBotConfig)
++	g.POST("/bot/settings/update", a.checkBotAPIAuth, a.updateBotSetting)
++	g.POST("/bot/plans/manage", a.checkBotAPIAuth, a.managePlans)
++	g.GET("/bot/session", a.getBotSession)
++	g.POST("/bot/session", a.checkBotAPIAuth, a.updateBotSession)
++	g.GET("/clients/details", a.checkBotAPIAuth, a.getClientDetails)
++	g.POST("/clients/add_trial", a.checkBotAPIAuth, a.addTrialClient)
++	g.POST("/transactions/create", a.checkBotAPIAuth, a.createTransaction)
++	g.GET("/transactions/pending", a.checkBotAPIAuth, a.getPendingTransactions)
++	g.POST("/transactions/action", a.checkBotAPIAuth, a.transactionAction)
++}
++
++func (a *BotController) getSubBaseURL(c *gin.Context) string {
++	db := database.GetDB()
++	var setting model.Setting
++	if err := db.Where("key = ?", "subURI").First(&setting).Error; err == nil && setting.Value != "" {
++		return strings.TrimSuffix(setting.Value, "/") + "/"
++	}
++	subDomain, _ := a.settingService.GetSubDomain()
++	if subDomain == "" {
++		subDomain, _ = a.settingService.GetWebDomain()
++	}
++	if subDomain == "" {
++		subDomain = c.Request.Host
++		if idx := strings.Index(subDomain, ":"); idx >= 0 {
++			subDomain = subDomain[:idx]
++		}
++	}
++	subPort, _ := a.settingService.GetSubPort()
++	subPath, _ := a.settingService.GetSubPath()
++	subKeyFile, _ := a.settingService.GetSubKeyFile()
++	subCertFile, _ := a.settingService.GetSubCertFile()
++
++	proto := "http"
++	if subKeyFile != "" && subCertFile != "" {
++		proto = "https"
++	}
++
++	baseURL := ""
++	if (subPort == 443 && proto == "https") || (subPort == 80 && proto == "http") || subPort == 0 {
++		baseURL = fmt.Sprintf("%s://%s", proto, subDomain)
++	} else {
++		baseURL = fmt.Sprintf("%s://%s:%d", proto, subDomain, subPort)
++	}
++	if !strings.HasSuffix(baseURL, "/") && !strings.HasPrefix(subPath, "/") {
++		baseURL += "/"
++	}
++	baseURL += subPath
++	if !strings.HasSuffix(baseURL, "/") {
++		baseURL += "/"
++	}
++	return baseURL
++}
++
++func formatBoolAsIntString(b bool) string {
++	if b {
++		return "1"
++	}
++	return "0"
++}
++
++func (a *BotController) getViolations(c *gin.Context) {
++	var violations []model.Violation
++	db := database.GetDB()
++	limitStr := c.DefaultQuery("limit", "50")
++	limit, err := strconv.Atoi(limitStr)
++	if err != nil {
++		limit = 50
++	}
++	if err := db.Order("timestamp desc").Limit(limit).Find(&violations).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++	c.JSON(http.StatusOK, violations)
++}
++
++func (a *BotController) resetPenalty(c *gin.Context) {
++	email := c.Query("email")
++	if email == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
++		return
++	}
++	db := database.GetDB()
++	var inbounds []model.Inbound
++	if err := db.Find(&inbounds).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	targetInboundID := 0
++	var targetSettings map[string]any
++
++	for _, inbound := range inbounds {
++		var settings map[string]any
++		if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil {
++			continue
++		}
++		clients, ok := settings["clients"].([]any)
++		if !ok {
++			continue
++		}
++		found := false
++		for i, client := range clients {
++			clientMap, ok := client.(map[string]any)
++			if !ok {
++				continue
++			}
++			if clientMap["email"] == email {
++				clientMap["penalty"] = 0
++				clientMap["enable"] = true
++				clients[i] = clientMap
++				found = true
++				break
++			}
++		}
++		if found {
++			settings["clients"] = clients
++			targetInboundID = inbound.Id
++			targetSettings = settings
++			break
++		}
++	}
++
++	if targetInboundID > 0 {
++		settingsBytes, err := json.MarshalIndent(targetSettings, "", "  ")
++		if err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++		if err := db.Model(&model.Inbound{}).Where("id = ?", targetInboundID).Update("settings", string(settingsBytes)).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++		db.Model(&xray.ClientTraffic{}).Where("email = ?", email).Updates(map[string]any{
++			"enable": true,
++		})
++
++		a.xrayService.SetToNeedRestart()
++		c.JSON(http.StatusOK, gin.H{"status": "success", "message": fmt.Sprintf("Penalty reset for %s", email)})
++		return
++	}
++
++	c.JSON(http.StatusNotFound, gin.H{"error": "Client not found"})
++}
++
++func (a *BotController) getClientInfo(c *gin.Context) {
++	email := c.Query("email")
++	if email == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
++		return
++	}
++	db := database.GetDB()
++	var inbounds []model.Inbound
++	if err := db.Find(&inbounds).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	for _, inbound := range inbounds {
++		var settings map[string]any
++		if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil {
++			continue
++		}
++		clients, ok := settings["clients"].([]any)
++		if !ok {
++			continue
++		}
++		for _, client := range clients {
++			clientMap, ok := client.(map[string]any)
++			if !ok {
++				continue
++			}
++			if clientMap["email"] == email {
++				limitIp := 0
++				if v, ok := clientMap["limitIp"].(float64); ok {
++					limitIp = int(v)
++				}
++				totalGB := int64(0)
++				if v, ok := clientMap["totalGB"].(float64); ok {
++					totalGB = int64(v)
++				}
++				expiryTime := int64(0)
++				if v, ok := clientMap["expiryTime"].(float64); ok {
++					expiryTime = int64(v)
++				}
++				c.JSON(http.StatusOK, gin.H{
++					"email":      email,
++					"limitIp":    limitIp,
++					"totalGB":    totalGB,
++					"expiryTime": expiryTime,
++				})
++				return
++			}
++		}
++	}
++
++	c.JSON(http.StatusNotFound, gin.H{"error": "Client not found"})
++}
++
++func (a *BotController) addClient(c *gin.Context) {
++	email := c.Query("email")
++	chat_id := c.Query("chat_id")
++	inboundIdStr := c.DefaultQuery("inbound_id", "1")
++	gbLimitStr := c.DefaultQuery("gb_limit", "50")
++	daysLimitStr := c.DefaultQuery("days_limit", "30")
++
++	inboundId, err := strconv.Atoi(inboundIdStr)
++	if err != nil {
++		inboundId = 1
++	}
++	gbLimit, err := strconv.Atoi(gbLimitStr)
++	if err != nil {
++		gbLimit = 50
++	}
++	daysLimit, err := strconv.Atoi(daysLimitStr)
++	if err != nil {
++		daysLimit = 30
++	}
++
++	db := database.GetDB()
++	var inbounds []model.Inbound
++	if err := db.Find(&inbounds).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	for _, inbound := range inbounds {
++		var settings map[string]any
++		if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil {
++			continue
++		}
++		clients, ok := settings["clients"].([]any)
++		if !ok {
++			continue
++		}
++		for _, client := range clients {
++			clientMap, ok := client.(map[string]any)
++			if !ok {
++				continue
++			}
++			if clientMap["email"] == email {
++				uuidVal, _ := clientMap["id"].(string)
++				subBase := a.getSubBaseURL(c)
++				subURI := fmt.Sprintf("%s%s", subBase, uuidVal)
++
++				c.JSON(http.StatusOK, gin.H{
++					"status":   "success",
++					"message":  "Client already exists.",
++					"uuid":     uuidVal,
++					"exists":   true,
++					"sub_link": subURI,
++				})
++				return
++			}
++		}
++	}
++
++	clientUUID := uuid.NewString()
++	expiryMs := int64(0)
++	if daysLimit > 0 {
++		expiryMs = int64((time.Now().Unix() + int64(daysLimit*86400)) * 1000)
++	}
++	totalBytes := int64(0)
++	if gbLimit > 0 {
++		totalBytes = int64(gbLimit) * 1024 * 1024 * 1024
++	}
++
++	newClient := model.Client{
++		ID:         clientUUID,
++		Email:      email,
++		Enable:     true,
++		ExpiryTime: expiryMs,
++		TotalGB:    totalBytes,
++		Flow:       "xtls-rprx-vision",
++		LimitIP:    2,
++		SubID:      uuid.NewString(),
++	}
++
++	clientsList := []model.Client{newClient}
++	settingsMap := map[string]any{
++		"clients": clientsList,
++	}
++	settingsBytes, err := json.Marshal(settingsMap)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	inboundPayload := &model.Inbound{
++		Id:       inboundId,
++		Settings: string(settingsBytes),
++	}
++
++	needRestart, err := a.inboundService.AddInboundClient(inboundPayload)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	if needRestart {
++		a.xrayService.SetToNeedRestart()
++	}
++
++	subBase := a.getSubBaseURL(c)
++	subURI := fmt.Sprintf("%s%s", subBase, clientUUID)
++
++	if chat_id != "" {
++		go func() {
++			cfURL := "https://shadow-net-bot.prem-ir.workers.dev/deliver"
++			payload := map[string]string{
++				"chat_id": chat_id,
++				"uuid":    clientUUID,
++			}
++			bodyBytes, _ := json.Marshal(payload)
++			resp, err := http.Post(cfURL, "application/json", bytes.NewBuffer(bodyBytes))
++			if err == nil {
++				resp.Body.Close()
++			}
++		}()
++	}
++
++	c.JSON(http.StatusOK, gin.H{
++		"status":   "success",
++		"message":  fmt.Sprintf("Client %s created.", email),
++		"uuid":     clientUUID,
++		"sub_link": subURI,
++	})
++}
++
++func (a *BotController) getQRCode(c *gin.Context) {
++	data := c.Query("data")
++	if data == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "data is required"})
++		return
++	}
++	png, err := qrcode.Encode(data, qrcode.Medium, 256)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++	c.Data(http.StatusOK, "image/png", png)
++}
++
++func (a *BotController) getBotConfig(c *gin.Context) {
++	enableTrial, _ := a.settingService.GetSnBotEnableTrial()
++	trialVolumeMb, _ := a.settingService.GetSnBotTrialVolumeMb()
++	trialExpiryHours, _ := a.settingService.GetSnBotTrialExpiryHours()
++	trialIpLimit, _ := a.settingService.GetSnBotTrialIpLimit()
++	enableZibal, _ := a.settingService.GetSnBotEnableZibal()
++	enableCardToCard, _ := a.settingService.GetSnBotEnableCardToCard()
++	supportEnabled, _ := a.settingService.GetSnBotSupportEnabled()
++	cardNumber, _ := a.settingService.GetSnBotCardNumber()
++	cardOwner, _ := a.settingService.GetSnBotCardOwner()
++
++	var plans []model.BotPlan
++	db := database.GetDB()
++	if err := db.Where("enabled = 1").Find(&plans).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	settings := map[string]string{
++		"enable_trial":        formatBoolAsIntString(enableTrial),
++		"trial_volume_mb":    strconv.Itoa(trialVolumeMb),
++		"trial_expiry_hours": strconv.Itoa(trialExpiryHours),
++		"trial_ip_limit":     strconv.Itoa(trialIpLimit),
++		"enable_zibal":      formatBoolAsIntString(enableZibal),
++		"enable_card_to_card": formatBoolAsIntString(enableCardToCard),
++		"support_enabled":   formatBoolAsIntString(supportEnabled),
++		"card_number":       cardNumber,
++		"card_owner":        cardOwner,
++	}
++
++	type PlanResp struct {
++		Id         int    `json:"id"`
++		Name       string `json:"name"`
++		VolumeGb   int    `json:"volume_gb"`
++		Days       int    `json:"days"`
++		PriceToman int    `json:"price_toman"`
++	}
++	plansResp := make([]PlanResp, 0, len(plans))
++	for _, p := range plans {
++		plansResp = append(plansResp, PlanResp{
++			Id:         p.Id,
++			Name:       p.Name,
++			VolumeGb:   p.VolumeGb,
++			Days:       p.Days,
++			PriceToman: p.PriceToman,
++		})
++	}
++
++	c.JSON(http.StatusOK, gin.H{
++		"status":   "success",
++		"settings": settings,
++		"plans":    plansResp,
++	})
++}
++
++func (a *BotController) updateBotSetting(c *gin.Context) {
++	type Payload struct {
++		Key   string `json:"key"`
++		Value string `json:"value"`
++	}
++	var req Payload
++	if err := c.ShouldBindJSON(&req); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++		return
++	}
++
++	db := database.GetDB()
++	var setting model.Setting
++	err := db.Where("key = ?", req.Key).First(&setting).Error
++	switch err {
++	case gorm.ErrRecordNotFound:
++		setting = model.Setting{Key: req.Key, Value: req.Value}
++		if err := db.Create(&setting).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	case nil:
++		setting.Value = req.Value
++		if err := db.Save(&setting).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	default:
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	c.JSON(http.StatusOK, gin.H{"status": "success", "message": fmt.Sprintf("Setting '%s' updated.", req.Key)})
++}
++
++func (a *BotController) managePlans(c *gin.Context) {
++	type Payload struct {
++		Id         int    `json:"id"`
++		Name       string `json:"name"`
++		VolumeGb   int    `json:"volume_gb"`
++		Days       int    `json:"days"`
++		PriceToman int    `json:"price_toman"`
++		Enabled    int    `json:"enabled"`
++		Action     string `json:"action"`
++	}
++	var req Payload
++	if err := c.ShouldBindJSON(&req); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++		return
++	}
++
++	db := database.GetDB()
++
++	switch req.Action {
++	case "add":
++		plan := model.BotPlan{
++			Name:       req.Name,
++			VolumeGb:   req.VolumeGb,
++			Days:       req.Days,
++			PriceToman: req.PriceToman,
++			Enabled:    1,
++		}
++		if err := db.Create(&plan).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	case "edit":
++		var plan model.BotPlan
++		if err := db.First(&plan, req.Id).Error; err != nil {
++			c.JSON(http.StatusNotFound, gin.H{"error": "Plan not found"})
++			return
++		}
++		plan.Name = req.Name
++		plan.VolumeGb = req.VolumeGb
++		plan.Days = req.Days
++		plan.PriceToman = req.PriceToman
++		plan.Enabled = req.Enabled
++		if err := db.Save(&plan).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	case "delete":
++		if err := db.Delete(&model.BotPlan{}, req.Id).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	case "toggle":
++		var plan model.BotPlan
++		if err := db.First(&plan, req.Id).Error; err != nil {
++			c.JSON(http.StatusNotFound, gin.H{"error": "Plan not found"})
++			return
++		}
++		if plan.Enabled == 1 {
++			plan.Enabled = 0
++		} else {
++			plan.Enabled = 1
++		}
++		if err := db.Save(&plan).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	default:
++		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid action"})
++		return
++	}
++
++	c.JSON(http.StatusOK, gin.H{"status": "success", "message": fmt.Sprintf("Plan action '%s' executed.", req.Action)})
++}
++
++func (a *BotController) getBotSession(c *gin.Context) {
++	chatIdStr := c.Query("chat_id")
++	if chatIdStr == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "chat_id is required"})
++		return
++	}
++	chatId, err := strconv.ParseInt(chatIdStr, 10, 64)
++	if err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chat_id"})
++		return
++	}
++
++	db := database.GetDB()
++	var session model.BotSession
++	err = db.Where("chat_id = ?", chatId).First(&session).Error
++	if err == gorm.ErrRecordNotFound {
++		c.JSON(http.StatusOK, gin.H{
++			"status":  "success",
++			"chat_id": chatId,
++			"state":   "start",
++			"data":    gin.H{},
++		})
++		return
++	} else if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	var sessionData map[string]any
++	if session.Data != "" {
++		json.Unmarshal([]byte(session.Data), &sessionData)
++	}
++	if sessionData == nil {
++		sessionData = map[string]any{}
++	}
++
++	c.JSON(http.StatusOK, gin.H{
++		"status":  "success",
++		"chat_id": chatId,
++		"state":   session.State,
++		"data":    sessionData,
++	})
++}
++
++func (a *BotController) updateBotSession(c *gin.Context) {
++	type Payload struct {
++		ChatID int64          `json:"chat_id"`
++		State  string         `json:"state"`
++		Data   map[string]any `json:"data"`
++	}
++	var req Payload
++	if err := c.ShouldBindJSON(&req); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++		return
++	}
++
++	dataBytes, _ := json.Marshal(req.Data)
++	db := database.GetDB()
++
++	var session model.BotSession
++	err := db.Where("chat_id = ?", req.ChatID).First(&session).Error
++	switch err {
++	case gorm.ErrRecordNotFound:
++		session = model.BotSession{
++			ChatId: req.ChatID,
++			State:  req.State,
++			Data:   string(dataBytes),
++		}
++		if err := db.Create(&session).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	case nil:
++		session.State = req.State
++		session.Data = string(dataBytes)
++		if err := db.Save(&session).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	default:
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	c.JSON(http.StatusOK, gin.H{"status": "success", "message": "Session updated."})
++}
++
++func (a *BotController) getClientDetails(c *gin.Context) {
++	email := c.Query("email")
++	if email == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "email is required"})
++		return
++	}
++
++	db := database.GetDB()
++
++	var traffic xray.ClientTraffic
++	hasTraffic := true
++	if err := db.Where("email = ?", email).First(&traffic).Error; err != nil {
++		if err == gorm.ErrRecordNotFound {
++			hasTraffic = false
++		} else {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++	}
++
++	var inbounds []model.Inbound
++	if err := db.Find(&inbounds).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	uuidVal := ""
++	limitIp := 0
++	foundClient := false
++
++	for _, inbound := range inbounds {
++		var settings map[string]any
++		if err := json.Unmarshal([]byte(inbound.Settings), &settings); err != nil {
++			continue
++		}
++		clients, ok := settings["clients"].([]any)
++		if !ok {
++			continue
++		}
++		for _, client := range clients {
++			clientMap, ok := client.(map[string]any)
++			if !ok {
++				continue
++			}
++			if clientMap["email"] == email {
++				uuidVal, _ = clientMap["id"].(string)
++				if v, ok := clientMap["limitIp"].(float64); ok {
++					limitIp = int(v)
++				}
++				foundClient = true
++				break
++			}
++		}
++		if foundClient {
++			break
++		}
++	}
++
++	if !hasTraffic && !foundClient {
++		c.JSON(http.StatusNotFound, gin.H{"error": "Client not found"})
++		return
++	}
++
++	enable := true
++	up := int64(0)
++	down := int64(0)
++	total := int64(0)
++	expiryTime := int64(0)
++
++	if hasTraffic {
++		enable = traffic.Enable
++		up = traffic.Up
++		down = traffic.Down
++		total = traffic.Total
++		expiryTime = traffic.ExpiryTime
++	}
++
++	subURI := ""
++	if uuidVal != "" {
++		subBase := a.getSubBaseURL(c)
++		subURI = fmt.Sprintf("%s%s", subBase, uuidVal)
++	}
++
++	c.JSON(http.StatusOK, gin.H{
++		"email":       email,
++		"uuid":        uuidVal,
++		"enable":      enable,
++		"up":          up,
++		"down":        down,
++		"total":       total,
++		"expiry_time": expiryTime,
++		"limit_ip":    limitIp,
++		"sub_link":    subURI,
++	})
++}
++
++func (a *BotController) addTrialClient(c *gin.Context) {
++	type Payload struct {
++		ChatID   int64  `json:"chat_id"`
++		Username string `json:"username"`
++	}
++	var req Payload
++	if err := c.ShouldBindJSON(&req); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++		return
++	}
++
++	email := fmt.Sprintf("shawn_user_%d", req.ChatID)
++	db := database.GetDB()
++
++	var existsTrial model.TrialLog
++	if err := db.Where("chat_id = ?", req.ChatID).First(&existsTrial).Error; err == nil {
++		c.JSON(http.StatusOK, gin.H{
++			"status":  "denied",
++			"message": "شما قبلاً اکانت تست دریافت کرده‌اید و مجاز به دریافت مجدد نیستید.",
++		})
++		return
++	}
++
++	var count int64
++	db.Model(&xray.ClientTraffic{}).Where("email = ?", email).Count(&count)
++	if count > 0 {
++		c.JSON(http.StatusOK, gin.H{
++			"status":  "denied",
++			"message": "شما در حال حاضر دارای یک اشتراک فعال یا قبلی هستید.",
++		})
++		return
++	}
++
++	enableTrial, _ := a.settingService.GetSnBotEnableTrial()
++	if !enableTrial {
++		c.JSON(http.StatusOK, gin.H{
++			"status":  "disabled",
++			"message": "در حال حاضر دریافت اکانت تست رایگان از طرف مدیریت غیرفعال شده است.",
++		})
++		return
++	}
++
++	volMb, _ := a.settingService.GetSnBotTrialVolumeMb()
++	expiryHours, _ := a.settingService.GetSnBotTrialExpiryHours()
++	ipLimit, _ := a.settingService.GetSnBotTrialIpLimit()
++
++	if volMb == 0 {
++		volMb = 1024
++	}
++	if expiryHours == 0 {
++		expiryHours = 24
++	}
++	if ipLimit == 0 {
++		ipLimit = 2
++	}
++
++	trialLog := &model.TrialLog{
++		ChatId:   req.ChatID,
++		Username: req.Username,
++	}
++	if err := db.Create(trialLog).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	clientUUID := uuid.NewString()
++	expiryMs := int64((time.Now().Unix() + int64(expiryHours*3600)) * 1000)
++	totalBytes := int64(volMb) * 1024 * 1024
++
++	client := model.Client{
++		ID:         clientUUID,
++		Email:      email,
++		Enable:     true,
++		ExpiryTime: expiryMs,
++		TotalGB:    totalBytes,
++		Flow:       "xtls-rprx-vision",
++		LimitIP:    ipLimit,
++		SubID:      uuid.NewString(),
++	}
++
++	clientsList := []model.Client{client}
++	settingsMap := map[string]any{
++		"clients": clientsList,
++	}
++	settingsBytes, err := json.Marshal(settingsMap)
++	if err != nil {
++		db.Delete(&model.TrialLog{}, req.ChatID)
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	inboundPayload := &model.Inbound{
++		Id:       2,
++		Settings: string(settingsBytes),
++	}
++
++	needRestart, err := a.inboundService.AddInboundClient(inboundPayload)
++	if err != nil {
++		db.Delete(&model.TrialLog{}, req.ChatID)
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	if needRestart {
++		a.xrayService.SetToNeedRestart()
++	}
++
++	subBase := a.getSubBaseURL(c)
++	subURI := fmt.Sprintf("%s%s", subBase, clientUUID)
++
++	c.JSON(http.StatusOK, gin.H{
++		"status":   "success",
++		"message":  "اکانت تست ۱ روزه با موفقیت صادر شد.",
++		"uuid":     clientUUID,
++		"sub_link": subURI,
++	})
++}
++
++func (a *BotController) createTransaction(c *gin.Context) {
++	type Payload struct {
++		ChatID      int64  `json:"chat_id"`
++		Username    string `json:"username"`
++		PlanID      int    `json:"plan_id"`
++		Amount      int    `json:"amount"`
++		CardDetails string `json:"card_details"`
++	}
++	var req Payload
++	if err := c.ShouldBindJSON(&req); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++		return
++	}
++
++	db := database.GetDB()
++	tx := model.PendingTransaction{
++		ChatId:      req.ChatID,
++		Username:    req.Username,
++		PlanId:      req.PlanID,
++		Amount:      req.Amount,
++		CardDetails: req.CardDetails,
++		Status:      "pending",
++	}
++
++	if err := db.Create(&tx).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	c.JSON(http.StatusOK, gin.H{"status": "success", "transaction_id": tx.Id})
++}
++
++func (a *BotController) getPendingTransactions(c *gin.Context) {
++	var txs []model.PendingTransaction
++	db := database.GetDB()
++	if err := db.Where("status = ?", "pending").Find(&txs).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	type TxResp struct {
++		Id          int    `json:"id"`
++		ChatId      int64  `json:"chat_id"`
++		Username    string `json:"username"`
++		PlanId      int    `json:"plan_id"`
++		Amount      int    `json:"amount"`
++		CardDetails string `json:"card_details"`
++		Status      string `json:"status"`
++		CreatedAt   int64  `json:"created_at"`
++	}
++	resps := make([]TxResp, 0, len(txs))
++	for _, t := range txs {
++		resps = append(resps, TxResp{
++			Id:          t.Id,
++			ChatId:      t.ChatId,
++			Username:    t.Username,
++			PlanId:      t.PlanId,
++			Amount:      t.Amount,
++			CardDetails: t.CardDetails,
++			Status:      t.Status,
++			CreatedAt:   t.CreatedAt,
++		})
++	}
++	c.JSON(http.StatusOK, resps)
++}
++
++func (a *BotController) transactionAction(c *gin.Context) {
++	type Payload struct {
++		TransactionID int    `json:"transaction_id"`
++		Action        string `json:"action"`
++	}
++	var req Payload
++	if err := c.ShouldBindJSON(&req); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++		return
++	}
++
++	db := database.GetDB()
++	var tx model.PendingTransaction
++	if err := db.First(&tx, req.TransactionID).Error; err != nil {
++		c.JSON(http.StatusNotFound, gin.H{"error": "Transaction not found"})
++		return
++	}
++
++	if tx.Status != "pending" {
++		c.JSON(http.StatusOK, gin.H{"status": "error", "message": "Transaction is already processed."})
++		return
++	}
++
++	if req.Action == "reject" {
++		tx.Status = "rejected"
++		if err := db.Save(&tx).Error; err != nil {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++			return
++		}
++		c.JSON(http.StatusOK, gin.H{
++			"status":  "success",
++			"message": "Transaction rejected",
++			"chat_id": tx.ChatId,
++			"action":  "reject",
++		})
++		return
++	}
++
++	var plan model.BotPlan
++	if err := db.First(&plan, tx.PlanId).Error; err != nil {
++		c.JSON(http.StatusNotFound, gin.H{"error": "Plan not found"})
++		return
++	}
++
++	tx.Status = "approved"
++	if err := db.Save(&tx).Error; err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	email := fmt.Sprintf("shawn_user_%d", tx.ChatId)
++	clientUUID := uuid.NewString()
++	expiryMs := int64(0)
++	if plan.Days > 0 {
++		expiryMs = int64((time.Now().Unix() + int64(plan.Days*86400)) * 1000)
++	}
++	totalBytes := int64(0)
++	if plan.VolumeGb > 0 {
++		totalBytes = int64(plan.VolumeGb) * 1024 * 1024 * 1024
++	}
++
++	client := model.Client{
++		ID:         clientUUID,
++		Email:      email,
++		Enable:     true,
++		ExpiryTime: expiryMs,
++		TotalGB:    totalBytes,
++		Flow:       "xtls-rprx-vision",
++		LimitIP:    2,
++		SubID:      uuid.NewString(),
++	}
++
++	clientsList := []model.Client{client}
++	settingsMap := map[string]any{
++		"clients": clientsList,
++	}
++	settingsBytes, err := json.Marshal(settingsMap)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	inboundPayload := &model.Inbound{
++		Id:       2,
++		Settings: string(settingsBytes),
++	}
++
++	needRestart, err := a.inboundService.AddInboundClient(inboundPayload)
++	if err != nil {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
++		return
++	}
++
++	if needRestart {
++		a.xrayService.SetToNeedRestart()
++	}
++
++	subBase := a.getSubBaseURL(c)
++	subURI := fmt.Sprintf("%s%s", subBase, clientUUID)
++
++	if tx.ChatId > 0 {
++		go func() {
++			cfURL := "https://shadow-net-bot.prem-ir.workers.dev/deliver"
++			payload := map[string]string{
++				"chat_id": strconv.FormatInt(tx.ChatId, 10),
++				"uuid":    clientUUID,
++			}
++			bodyBytes, _ := json.Marshal(payload)
++			resp, err := http.Post(cfURL, "application/json", bytes.NewBuffer(bodyBytes))
++			if err == nil {
++				resp.Body.Close()
++			}
++		}()
++	}
++
++	c.JSON(http.StatusOK, gin.H{
++		"status":   "success",
++		"message":  "Transaction approved and client created.",
++		"chat_id":  tx.ChatId,
++		"uuid":     clientUUID,
++		"sub_link": subURI,
++		"action":   "approve",
++	})
++}
 diff --git a/web/controller/inbound.go b/web/controller/inbound.go
 index 541ae449..d4aea5a4 100644
 --- a/web/controller/inbound.go
@@ -1955,10 +3711,10 @@ index 1003f783..fc5edf62 100644
 +	}
 +}
 diff --git a/web/entity/entity.go b/web/entity/entity.go
-index bc4ce5a1..10b50819 100644
+index bc4ce5a1..9a7e68e9 100644
 --- a/web/entity/entity.go
 +++ b/web/entity/entity.go
-@@ -49,6 +49,16 @@ type AllSetting struct {
+@@ -49,6 +49,25 @@ type AllSetting struct {
  	TgCpu            int    `json:"tgCpu" form:"tgCpu"`                       // CPU usage threshold for alerts
  	TgLang           string `json:"tgLang" form:"tgLang"`                     // Telegram bot language
  
@@ -1971,11 +3727,20 @@ index bc4ce5a1..10b50819 100644
 +	SnPanelProxyEnable bool   `json:"snPanelProxyEnable" form:"snPanelProxyEnable"` // Enable proxy for panel outbound requests
 +	SnPanelProxyURL    string `json:"snPanelProxyURL" form:"snPanelProxyURL"`       // Proxy URL for panel outbound requests
 +	SnPanelProxyHistory string `json:"snPanelProxyHistory" form:"snPanelProxyHistory"` // Saved panel proxy configurations
++	SnBotEnableTrial      bool   `json:"snBotEnableTrial" form:"snBotEnableTrial"`
++	SnBotTrialVolumeMb    int    `json:"snBotTrialVolumeMb" form:"snBotTrialVolumeMb"`
++	SnBotTrialExpiryHours int    `json:"snBotTrialExpiryHours" form:"snBotTrialExpiryHours"`
++	SnBotTrialIpLimit     int    `json:"snBotTrialIpLimit" form:"snBotTrialIpLimit"`
++	SnBotEnableZibal      bool   `json:"snBotEnableZibal" form:"snBotEnableZibal"`
++	SnBotEnableCardToCard bool   `json:"snBotEnableCardToCard" form:"snBotEnableCardToCard"`
++	SnBotSupportEnabled   bool   `json:"snBotSupportEnabled" form:"snBotSupportEnabled"`
++	SnBotCardNumber       string `json:"snBotCardNumber" form:"snBotCardNumber"`
++	SnBotCardOwner        string `json:"snBotCardOwner" form:"snBotCardOwner"`
 +
  	// Security settings
  	TimeLocation    string `json:"timeLocation" form:"timeLocation"`       // Time zone location
  	TwoFactorEnable bool   `json:"twoFactorEnable" form:"twoFactorEnable"` // Enable two-factor authentication
-@@ -124,6 +134,9 @@ type AllSettingView struct {
+@@ -124,6 +143,9 @@ type AllSettingView struct {
  	HasApiToken       bool `json:"hasApiToken"`
  	HasWarpSecret     bool `json:"hasWarpSecret"`
  	HasNordSecret     bool `json:"hasNordSecret"`
@@ -2658,7 +4423,7 @@ index 54aef910..ff815038 100644
  		}
  	}
 diff --git a/web/service/setting.go b/web/service/setting.go
-index 1d5173a6..0c131a2b 100644
+index 1d5173a6..ed1566a8 100644
 --- a/web/service/setting.go
 +++ b/web/service/setting.go
 @@ -6,6 +6,8 @@ import (
@@ -2679,7 +4444,7 @@ index 1d5173a6..0c131a2b 100644
  	"webCertFile":                 "",
  	"webKeyFile":                  "",
  	"secret":                      random.Seq(32),
-@@ -110,6 +112,14 @@ var defaultValueMap = map[string]string{
+@@ -110,6 +112,23 @@ var defaultValueMap = map[string]string{
  	"ldapDefaultTotalGB":    "0",
  	"ldapDefaultExpiryDays": "0",
  	"ldapDefaultLimitIP":    "0",
@@ -2691,10 +4456,19 @@ index 1d5173a6..0c131a2b 100644
 +	"snPanelProxyEnable":    "false",
 +	"snPanelProxyURL":       "",
 +	"snPanelProxyHistory":   "[]",
++	"snBotEnableTrial":      "true",
++	"snBotTrialVolumeMb":    "1024",
++	"snBotTrialExpiryHours": "24",
++	"snBotTrialIpLimit":     "2",
++	"snBotEnableZibal":      "true",
++	"snBotEnableCardToCard": "true",
++	"snBotSupportEnabled":   "true",
++	"snBotCardNumber":       "6037997912345678",
++	"snBotCardOwner":        "Vahid",
  }
  
  // SettingService provides business logic for application settings management.
-@@ -215,9 +225,15 @@ func (s *SettingService) GetAllSettingView() (*entity.AllSettingView, error) {
+@@ -215,9 +234,15 @@ func (s *SettingService) GetAllSettingView() (*entity.AllSettingView, error) {
  	if err := database.GetDB().Model(model.ApiToken{}).Where("enabled = ?", true).Count(&apiTokenCount).Error; err == nil {
  		view.HasApiToken = apiTokenCount > 0
  	}
@@ -2710,7 +4484,7 @@ index 1d5173a6..0c131a2b 100644
  	return view, nil
  }
  
-@@ -367,6 +383,18 @@ func (s *SettingService) SetTgBotChatId(chatIds string) error {
+@@ -367,6 +392,18 @@ func (s *SettingService) SetTgBotChatId(chatIds string) error {
  	return s.setString("tgBotChatId", chatIds)
  }
  
@@ -2729,7 +4503,7 @@ index 1d5173a6..0c131a2b 100644
  func (s *SettingService) GetTgbotEnabled() (bool, error) {
  	return s.getBool("tgBotEnable")
  }
-@@ -770,6 +798,65 @@ func (s *SettingService) GetLdapDefaultLimitIP() (int, error) {
+@@ -770,6 +807,65 @@ func (s *SettingService) GetLdapDefaultLimitIP() (int, error) {
  	return s.getInt("ldapDefaultLimitIP")
  }
  
@@ -2773,7 +4547,7 @@ index 1d5173a6..0c131a2b 100644
 +	// It is reachable worldwide and responds within ms.
 +	resp, err := client.Get("https://1.1.1.1/dns-query")
 +
-+	// Always stop the test bridge ΓÇö it's ephemeral and must not linger.
++	// Always stop the test bridge — it's ephemeral and must not linger.
 +	if testBridge != nil {
 +		testBridge.Stop()
 +	}
@@ -2795,7 +4569,7 @@ index 1d5173a6..0c131a2b 100644
  func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
  	if err := s.preserveRedactedSecrets(allSetting); err != nil {
  		return err
-@@ -781,6 +868,16 @@ func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
+@@ -781,6 +877,16 @@ func (s *SettingService) UpdateAllSetting(allSetting *entity.AllSetting) error {
  		return err
  	}
  
@@ -2812,7 +4586,7 @@ index 1d5173a6..0c131a2b 100644
  	v := reflect.ValueOf(allSetting).Elem()
  	t := reflect.TypeFor[entity.AllSetting]()
  	fields := reflect_util.GetFields(t)
-@@ -819,6 +916,18 @@ func (s *SettingService) preserveRedactedSecrets(allSetting *entity.AllSetting)
+@@ -819,6 +925,18 @@ func (s *SettingService) preserveRedactedSecrets(allSetting *entity.AllSetting)
  		}
  		allSetting.TwoFactorToken = value
  	}
@@ -2831,7 +4605,7 @@ index 1d5173a6..0c131a2b 100644
  	return nil
  }
  
-@@ -842,7 +951,7 @@ func validateSettingsURLs(allSetting *entity.AllSetting) error {
+@@ -842,7 +960,7 @@ func validateSettingsURLs(allSetting *entity.AllSetting) error {
  
  func (s *SettingService) UpdateSecret(key string, value string) error {
  	switch key {
@@ -2840,6 +4614,51 @@ index 1d5173a6..0c131a2b 100644
  		return s.saveSetting(key, strings.TrimSpace(value))
  	default:
  		return common.NewError("secret key is not replaceable:", key)
+@@ -967,3 +1085,44 @@ func (s *SettingService) GetDefaultSettings(host string) (any, error) {
+ 
+ 	return result, nil
+ }
++
++func (s *SettingService) GetSnBotEnableTrial() (bool, error) {
++	return s.getBool("snBotEnableTrial")
++}
++
++func (s *SettingService) GetSnBotTrialVolumeMb() (int, error) {
++	return s.getInt("snBotTrialVolumeMb")
++}
++
++func (s *SettingService) GetSnBotTrialExpiryHours() (int, error) {
++	return s.getInt("snBotTrialExpiryHours")
++}
++
++func (s *SettingService) GetSnBotTrialIpLimit() (int, error) {
++	return s.getInt("snBotTrialIpLimit")
++}
++
++func (s *SettingService) GetSnBotEnableZibal() (bool, error) {
++	return s.getBool("snBotEnableZibal")
++}
++
++func (s *SettingService) GetSnBotEnableCardToCard() (bool, error) {
++	return s.getBool("snBotEnableCardToCard")
++}
++
++func (s *SettingService) GetSnBotSupportEnabled() (bool, error) {
++	return s.getBool("snBotSupportEnabled")
++}
++
++func (s *SettingService) GetSnBotCardNumber() (string, error) {
++	return s.getString("snBotCardNumber")
++}
++
++func (s *SettingService) GetSnBotCardOwner() (string, error) {
++	return s.getString("snBotCardOwner")
++}
++
++func (s *SettingService) GetSnBotTokenAdmin() (string, error) {
++	return s.getString("snBotTokenAdmin")
++}
++
 diff --git a/web/service/shadownet.go b/web/service/shadownet.go
 new file mode 100644
 index 00000000..3e02cbe8
@@ -2932,10 +4751,10 @@ index 00000000..3e02cbe8
 +		var id int64
 +		fmt.Sscanf(adminChatId, "%d", &id)
 +		
-+		msg := fmt.Sprintf("ΓÜá∩╕Å <b>Penalty Issued</b>\n\n<b>Client:</b> %s\n<b>IP:</b> %s\n<b>Strikes:</b> %d/%d", 
++		msg := fmt.Sprintf("⚠️ <b>Penalty Issued</b>\n\n<b>Client:</b> %s\n<b>IP:</b> %s\n<b>Strikes:</b> %d/%d", 
 +			clientEmail, ip, penaltyCount, maxPenalty)
 +		if penaltyCount >= maxPenalty {
-+			msg += "\n\n≡ƒÜ½ <b>Account Disabled Automatically</b>"
++			msg += "\n\n🚫 <b>Account Disabled Automatically</b>"
 +		}
 +		
 +		adminBot.SendMessage(context.Background(), tu.Message(tu.ID(id), msg).WithParseMode(telego.ModeHTML))
@@ -3025,22 +4844,40 @@ index f2052f66..a0ca11a6 100644
 --- a/web/translation/fa-IR.json
 +++ b/web/translation/fa-IR.json
 @@ -610,6 +610,16 @@
-         "userPassMustBeNotEmpty": "┘å╪º┘àΓÇî┌⌐╪º╪▒╪¿╪▒█î █î╪º ╪▒┘à╪▓╪╣╪¿┘ê╪▒ ╪¼╪»█î╪» ╪«╪º┘ä█îΓÇî╪º╪│╪¬",
-         "getOutboundTrafficError": "╪«╪╖╪º ╪»╪▒ ╪»╪▒█î╪º┘ü╪¬ ╪¬╪▒╪º┘ü█î┌⌐ ╪«╪▒┘ê╪¼█î",
-         "resetOutboundTrafficError": "╪«╪╖╪º ╪»╪▒ ╪¿╪º╪▓┘å╪┤╪º┘å█î ╪¬╪▒╪º┘ü█î┌⌐ ╪«╪▒┘ê╪¼█î"
+         "userPassMustBeNotEmpty": "نام‌کاربری یا رمزعبور جدید خالی‌است",
+         "getOutboundTrafficError": "خطا در دریافت ترافیک خروجی",
+         "resetOutboundTrafficError": "خطا در بازنشانی ترافیک خروجی"
 +      },
 +      "shadowNet": {
-+        "panelProxy": "┘╛╪▒┘ê┌⌐╪│█î ┘╛┘å┘ä",
-+        "setAsPanelProxy": "╪¬┘å╪╕█î┘à ╪¿┘ç ╪╣┘å┘ê╪º┘å ┘╛╪▒┘ê┌⌐╪│█î ┘╛┘å┘ä",
-+        "disablePanelProxy": "╪║█î╪▒┘ü╪╣╪º┘äΓÇî╪│╪º╪▓█î ┘╛╪▒┘ê┌⌐╪│█î ┘╛┘å┘ä",
-+        "proxySuccess": "┘╛╪▒┘ê┌⌐╪│█î ┘╛┘å┘ä ╪¿╪º ┘à┘ê┘ü┘é█î╪¬ ╪¿┘çΓÇî╪▒┘ê╪▓╪▒╪│╪º┘å█î ╪┤╪»",
-+        "proxyFailed": "╪«╪╖╪º ╪»╪▒ ╪¿┘çΓÇî╪▒┘ê╪▓╪▒╪│╪º┘å█î ┘╛╪▒┘ê┌⌐╪│█î ┘╛┘å┘ä",
-+        "proxyDisableSuccess": "┘╛╪▒┘ê┌⌐╪│█î ┘╛┘å┘ä ╪¿╪º ┘à┘ê┘ü┘é█î╪¬ ╪║█î╪▒┘ü╪╣╪º┘ä ╪┤╪»",
-+        "proxyDisableFailed": "╪«╪╖╪º ╪»╪▒ ╪║█î╪▒┘ü╪╣╪º┘äΓÇî╪│╪º╪▓█î ┘╛╪▒┘ê┌⌐╪│█î ┘╛┘å┘ä",
-+        "proxyTooltip": "╪¬┘à╪º┘à█î ╪»╪▒╪«┘ê╪º╪│╪¬ΓÇî┘ç╪º█î ╪«╪▒┘ê╪¼█î ┘╛┘å┘ä ╪¬┘ê╪│╪╖ ╪º█î┘å ╪º█î┘å╪¿╪º┘å╪» ┘╛╪▒┘ê┌⌐╪│█î ╪┤╪»┘çΓÇî╪º┘å╪»."
++        "panelProxy": "پروکسی پنل",
++        "setAsPanelProxy": "تنظیم به عنوان پروکسی پنل",
++        "disablePanelProxy": "غیرفعال‌سازی پروکسی پنل",
++        "proxySuccess": "پروکسی پنل با موفقیت به‌روزرسانی شد",
++        "proxyFailed": "خطا در به‌روزرسانی پروکسی پنل",
++        "proxyDisableSuccess": "پروکسی پنل با موفقیت غیرفعال شد",
++        "proxyDisableFailed": "خطا در غیرفعال‌سازی پروکسی پنل",
++        "proxyTooltip": "تمامی درخواست‌های خروجی پنل توسط این اینباند پروکسی شده‌اند."
        }
      },
      "xray": {
+diff --git a/web/web.go b/web/web.go
+index 35516e4d..69d32928 100644
+--- a/web/web.go
++++ b/web/web.go
+@@ -234,6 +234,13 @@ func (s *Server) initRouter() (*gin.Engine, error) {
+ 	s.panel = controller.NewXUIController(g)
+ 	s.api = controller.NewAPIController(g, s.customGeoService)
+ 
++	// Bot API for external Python bots (direct engine access)
++	controller.NewBotController(engine.Group("/api"))
++	// Bot API for panel UI and internal operations (subject to basePath cookies)
++	if basePath != "" && basePath != "/" {
++		controller.NewBotController(g.Group("/api"))
++	}
++
+ 	// Initialize WebSocket hub
+ 	s.wsHub = websocket.NewHub()
+ 	go s.wsHub.Run()
 diff --git a/xray/process.go b/xray/process.go
 index f1a1400a..fd0cbd2a 100644
 --- a/xray/process.go
