@@ -40,8 +40,8 @@ fi
 DB_PATH="/etc/3x-ui/3x-ui.db"
 XUI_DIR="/usr/local/x-ui"
 BACKUP_DIR="/etc/3x-ui/backups/shadow_net_$(date +%Y%m%d_%H%M%S)"
-PATCH_URL="https://raw.githubusercontent.com/MahMotion/3x-ui-shadownet/main/shadow-net-v3.0.2.patch"
-PRECOMPILED_URL="https://github.com/MahMotion/3x-ui-shadownet/releases/download/v3.0.2-stealth/x-ui-linux-amd64"
+PATCH_URL="https://raw.githubusercontent.com/vahidvl/shadow-net-panel/main/shadow-net-v3.0.2.patch"
+PRECOMPILED_URL="https://github.com/vahidvl/shadow-net-panel/releases/download/v3.0.2-stealth/x-ui-linux-amd64"
 
 echo -e "${BLUE}==================================================================${NC}"
 echo -e "${BLUE}        Shadow-Net Proxy & Bot Patch Installer for 3x-ui v3.0.2  ${NC}"
